@@ -1,8 +1,12 @@
-# Python
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+
+# C extensions
 *.so
+
+# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -16,46 +20,101 @@ parts/
 sdist/
 var/
 wheels/
+share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
+pip-wheel-metadata/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
 
 # Virtual environments
+.env
+.venv
+env/
 venv/
 ENV/
-env/
-.venv
+env.bak/
+venv.bak/
 
-# IDE
+# IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 .DS_Store
+*.sublime-project
+*.sublime-workspace
 
-# Testing
-.coverage
-.pytest_cache/
-htmlcov/
-.tox/
+# mypy
 .mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Ruff
 .ruff_cache/
 
-# Codex Worker state files
+# Codex Worker specific - state files
 in-progress-*
 done_exec_log-*
 failed_exec_log-*
 completed_*
 .lock-*
 .tmp_exec_log-*
+*.tmp
 
-# Output
-*.log
+# Output files
 results.json
 results.jsonl
+*.log
+output/
 
-# Local config
-.env
+# Demo/test outputs
+demo_tasks/in-progress-*
+demo_tasks/done_exec_log-*
+demo_tasks/failed_exec_log-*
+demo_tasks/completed_*
+demo_tasks/.lock-*
+demo_tasks/.tmp_exec_log-*
+example_tasks/
+
+# Local configuration
 .env.local
+*.local
+config.local.json
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
