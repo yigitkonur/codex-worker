@@ -1,22 +1,22 @@
 # Codex Worker 🤖
 
-**Production-ready tool for running OpenAI Codex in parallel on your codebase**
+**Production-ready tool for running OpenAI Codex CLI in parallel on your codebase**
 
-Codex Worker enables safe, resumable, parallel execution of OpenAI Codex on multiple files. Perfect for automating repetitive coding tasks that don't require complex reasoning.
+Codex Worker enables safe, resumable, parallel execution of OpenAI Codex CLI on multiple files. Perfect for automating repetitive coding tasks that don't require complex reasoning.
 
 ## 🔥 Real-World Use Cases
 
 ### Save Claude/GPT-4 Tokens on Repetitive Tasks
-> "I use Claude Code to analyze npm lint errors, group them by file and error type, then create task files for Codex to fix. Since the tasks are clear and mechanical, Codex handles them perfectly. This saves my Claude tokens for complex problems and avoids hitting rate limits!" 
+> "I use Claude Code to analyze npm lint errors, group them by file and error type, then create task files for OpenAI Codex CLI to fix. Since the tasks are clear and mechanical, OpenAI Codex CLI handles them perfectly. This saves my Claude tokens for complex problems and avoids hitting rate limits!" 
 
 ### Common Scenarios
-- **Bulk Lint Fixes**: Let Claude analyze errors → Create fix tasks → Codex executes in parallel
-- **Test Generation**: Define test requirements → Codex writes tests for multiple files
-- **Code Migrations**: Specify transformation rules → Codex applies across codebase
-- **Documentation**: Outline what's needed → Codex adds to multiple files
-- **Refactoring**: Define the pattern → Codex applies consistently
+- **Bulk Lint Fixes**: Let Claude analyze errors → Create fix tasks → OpenAI Codex CLI executes in parallel
+- **Test Generation**: Define test requirements → OpenAI Codex CLI writes tests for multiple files
+- **Code Migrations**: Specify transformation rules → OpenAI Codex CLI applies across codebase
+- **Documentation**: Outline what's needed → OpenAI Codex CLI adds to multiple files
+- **Refactoring**: Define the pattern → OpenAI Codex CLI applies consistently
 
-The key insight: Use expensive AI (Claude/GPT-4) for **planning**, use Codex for **execution**.
+The key insight: Use expensive AI (Claude/GPT-4) for **planning**, use OpenAI Codex CLI for **execution**.
 
 ## 🎯 Why Codex Worker?
 
@@ -46,6 +46,18 @@ This prefix system enables:
 - **Parallel coordination** - Workers see what others are doing
 - **Clear visual status** - `ls` shows you everything
 - **No database needed** - Filesystem is the source of truth
+
+### Command Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--pattern` | File pattern to match | `*.md` |
+| `--model` | Model name | `o4-mini` |
+| `--mode` | Safety level | `read-only` |
+| `--concurrency` | Parallel workers | `1` |
+| `--timeout` | Task timeout (seconds) | None |
+| `--retries` | Retry attempts | `0` |
+| `--approval` | Human approval mode | `on-request` |
 
 ### 🔄 Perfect Resumability
 
@@ -85,7 +97,7 @@ echo "Fix the authentication bug in login.py" > fix-auth.md
 echo "Add rate limiting to API endpoints" > add-ratelimit.md
 echo "Refactor database queries for performance" > optimize-db.md
 
-# Run Codex on all .md files (safe read-only mode by default)
+# Run OpenAI Codex CLI on all .md files (safe read-only mode by default)
 codex-worker
 
 # Output:
@@ -121,7 +133,7 @@ codex-worker large-tasks/ --concurrency 8
 ### Different Models
 
 ```bash
-# Use a specific Codex model
+# Use a specific OpenAI Codex CLI model
 codex-worker --model o4
 
 # Use different models for different task complexity
@@ -258,43 +270,4 @@ codex-worker doc-*.md --concurrency 3
 
 ```bash
 export CODEX_CMD=/path/to/codex     # Custom codex binary
-```
-
-### Command Options
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--pattern` | File pattern to match | `*.md` |
-| `--model` | Model name | `o4-mini` |
-| `--mode` | Safety level | `read-only` |
-| `--concurrency` | Parallel workers | `1` |
-| `--timeout` | Task timeout (seconds) | None |
-| `--retries` | Retry attempts | `0` |
-| `--approval` | Human approval mode | `on-request` |
-
-## 📊 Performance Tips
-
-1. **Optimal Concurrency**: Usually 4-8 workers gives best results
-2. **File Organization**: Group similar tasks in directories
-3. **Task Granularity**: Smaller, focused tasks work better
-4. **Resource Monitoring**: Watch CPU/memory with high concurrency
-
-## 🚨 Troubleshooting
-
-### Stale Locks
-```bash
-# If workers crash, clean up stale locks
-codex-worker clean --max-age 3600
-```
-
-### Reset Everything
-```bash
-# Remove all state markers and start fresh
-codex-worker reset --force
-```
-
-### Debug Mode
-```bash
-# See detailed execution information
-codex-worker --verbose tasks/
 ```
