@@ -1,0 +1,1 @@
+Add comprehensive docstrings to all functions
