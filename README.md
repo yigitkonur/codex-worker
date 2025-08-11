@@ -298,23 +298,3 @@ codex-worker reset --force
 # See detailed execution information
 codex-worker --verbose tasks/
 ```
-
-## 🤝 Contributing
-
-We value:
-- **Simplicity over complexity**
-- **Clear, obvious implementations**
-- **Minimal dependencies**
-- **Practical solutions over theoretical perfection**
-
-## 📄 License
-
-MIT License - See LICENSE file
-
-## 🙏 Acknowledgments
-
-Built for the AI-assisted development community, inspired by the need for safe, parallel execution of coding agents.
-
----
-
-**Remember**: With great AI power comes great responsibility. Always review AI-generated code before deploying to production!
