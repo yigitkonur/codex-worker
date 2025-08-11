@@ -62,7 +62,7 @@ Interrupted? No problem. Codex Worker automatically:
 pip install codex-worker
 
 # Or install from source
-git clone https://github.com/yourusername/codex-worker
+git clone https://github.com/yigitkonur/codex-worker
 cd codex-worker
 pip install -e .
 ```

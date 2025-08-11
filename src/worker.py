@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Callable
 from enum import Enum
 
-from .state import TaskState, TaskMetadata, find_task_files, get_task_stats
+from state import TaskState, TaskMetadata, find_task_files, get_task_stats
 
 
 class ExecutionMode(Enum):

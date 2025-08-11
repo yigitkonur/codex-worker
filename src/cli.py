@@ -14,8 +14,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from rich.panel import Panel
 from rich import print as rprint
 
-from .worker import CodexWorker, WorkerConfig, ExecutionMode, ExecutionResult
-from .state import find_task_files, get_task_stats, TaskState
+from worker import CodexWorker, WorkerConfig, ExecutionMode, ExecutionResult
+from state import find_task_files, get_task_stats, TaskState
 
 # Initialize Typer app
 app = typer.Typer(

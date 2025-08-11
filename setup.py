@@ -33,8 +33,8 @@ setup(
     license="MIT",
     python_requires=">=3.8",
     
-    package_dir={"codex_worker": "src"},
-    packages=["codex_worker"],
+    package_dir={"": "src"},
+    packages=find_packages(where="src"),
     
     install_requires=[
         "typer[all]>=0.9.0",
@@ -53,8 +53,8 @@ setup(
     
     entry_points={
         "console_scripts": [
-            "codex-worker=codex_worker.cli:main",
-            "cw=codex_worker.cli:main",  # Short alias
+            "codex-worker=cli:main",
+            "cw=cli:main",  # Short alias
         ],
     },
     

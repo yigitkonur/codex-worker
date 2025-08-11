@@ -48,15 +48,11 @@ Homepage = "https://github.com/yigitkonur/codex-worker"
 "Source" = "https://github.com/yigitkonur/codex-worker"
 
 [project.scripts]
-codex-worker = "codex_worker.cli:main"
-cw = "codex_worker.cli:main"
+codex-worker = "cli:main"
+cw = "cli:main"
 
 [tool.setuptools]
-package-dir = {"codex_worker" = "src"}
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["codex_worker"]
+package-dir = {"" = "src"}
 
 [tool.black]
 line-length = 100
