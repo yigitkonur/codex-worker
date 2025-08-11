@@ -83,15 +83,10 @@ def run(
         "--pattern", "-p",
         help="File pattern to match (e.g., '*.md', '*.txt')"
     ),
-    engine: str = typer.Option(
-        "codex",
-        "--engine", "-e",
-        help="AI engine to use (codex or gemini)"
-    ),
     model: str = typer.Option(
         None,
         "--model", "-m",
-        help="Model to use (default: o4-mini for codex, gemini-2.5-pro for gemini)"
+        help="Model to use (default: o4-mini)"
     ),
     mode: ExecutionMode = typer.Option(
         ExecutionMode.READ_ONLY,
@@ -169,8 +164,8 @@ def run(
         # Dry run to preview what would be executed
         codex-worker tasks/ --mode dry-run
         
-        # Use Gemini with custom model
-        codex-worker --engine gemini --model gemini-2.5-flash tasks/
+        # Use custom model
+        codex-worker --model o4 tasks/
         
         # Clean up stale markers and run
         codex-worker --cleanup-stale 3600 tasks/
@@ -196,7 +191,7 @@ def run(
         f"[bold]Task Summary[/bold]\n\n"
         f"Files found: [cyan]{len(all_files)}[/cyan]\n"
         f"Pattern: [cyan]{pattern}[/cyan]\n"
-        f"Engine: [cyan]{engine}[/cyan]\n"
+        f"Engine: [cyan]codex[/cyan]\n"
         f"Model: [cyan]{model or 'default'}[/cyan]\n"
         f"Mode: [cyan]{mode.value}[/cyan]\n"
         f"Workers: [cyan]{concurrency}[/cyan]\n"
@@ -228,10 +223,9 @@ def run(
     
     # Setup configuration
     if not model:
-        model = "o4-mini" if engine == "codex" else "gemini-2.5-pro"
+        model = "o4-mini"
     
     config = WorkerConfig(
-        engine=engine,
         model=model,
         mode=mode,
         approval=approval,
@@ -242,7 +236,6 @@ def run(
         sleep_between=1.0,
         skip_git_check=True,
         codex_cmd=os.environ.get("CODEX_CMD", "codex"),
-        gemini_cmd=os.environ.get("GEMINI_CMD", "gemini"),
         verbose=verbose
     )
     

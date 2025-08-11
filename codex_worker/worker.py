@@ -27,7 +27,6 @@ class ExecutionMode(Enum):
 @dataclass
 class WorkerConfig:
     """Worker configuration."""
-    engine: str = "codex"
     model: str = "o4-mini"
     mode: ExecutionMode = ExecutionMode.READ_ONLY
     approval: str = "never"
@@ -38,7 +37,6 @@ class WorkerConfig:
     sleep_between: float = 1.0
     skip_git_check: bool = True
     codex_cmd: str = "codex"
-    gemini_cmd: str = "gemini"
     verbose: bool = False
 
 
@@ -100,8 +98,8 @@ class CodexWorker:
         """
         warnings = []
         
-        # Check if codex/gemini commands exist
-        cmd = self.config.codex_cmd if self.config.engine == "codex" else self.config.gemini_cmd
+        # Check if codex command exists
+        cmd = self.config.codex_cmd
         
         try:
             result = subprocess.run(
@@ -168,7 +166,7 @@ class CodexWorker:
         # Try to acquire task
         metadata = TaskMetadata(
             file=str(file),
-            engine=self.config.engine,
+            engine="codex",
             model=self.config.model,
             started_at=datetime.now().isoformat(),
             pid=os.getpid(),
@@ -237,21 +235,15 @@ class CodexWorker:
         start = time.time()
         
         # Build command
-        if self.config.engine == "codex":
-            cmd = [
-                self.config.codex_cmd,
-                "--model", self.config.model,
-                "--ask-for-approval", self.config.approval,
-                "--sandbox", self.config.mode.value,
-                "exec"
-            ]
-            if self.config.skip_git_check:
-                cmd.append("--skip-git-repo-check")
-        else:
-            cmd = [
-                self.config.gemini_cmd,
-                "-m", self.config.model
-            ]
+        cmd = [
+            self.config.codex_cmd,
+            "--model", self.config.model,
+            "--ask-for-approval", self.config.approval,
+            "--sandbox", self.config.mode.value,
+            "exec"
+        ]
+        if self.config.skip_git_check:
+            cmd.append("--skip-git-repo-check")
         
         # Dry run mode
         if self.config.mode == ExecutionMode.DRY_RUN:

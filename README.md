@@ -1,6 +1,22 @@
-**Production-ready tool for running AI coding agents in parallel on your codebase**
+# Codex Worker 🤖
 
-Codex Worker enables safe, resumable, parallel execution of AI coding agents (Codex, Gemini) on multiple files. It's designed for "vibe coding" - where you describe tasks in markdown files and let AI agents implement them in parallel.
+**Production-ready tool for running OpenAI Codex in parallel on your codebase**
+
+Codex Worker enables safe, resumable, parallel execution of OpenAI Codex on multiple files. Perfect for automating repetitive coding tasks that don't require complex reasoning.
+
+## 🔥 Real-World Use Cases
+
+### Save Claude/GPT-4 Tokens on Repetitive Tasks
+> "I use Claude Code to analyze npm lint errors, group them by file and error type, then create task files for Codex to fix. Since the tasks are clear and mechanical, Codex handles them perfectly. This saves my Claude tokens for complex problems and avoids hitting rate limits!" 
+
+### Common Scenarios
+- **Bulk Lint Fixes**: Let Claude analyze errors → Create fix tasks → Codex executes in parallel
+- **Test Generation**: Define test requirements → Codex writes tests for multiple files
+- **Code Migrations**: Specify transformation rules → Codex applies across codebase
+- **Documentation**: Outline what's needed → Codex adds to multiple files
+- **Refactoring**: Define the pattern → Codex applies consistently
+
+The key insight: Use expensive AI (Claude/GPT-4) for **planning**, use Codex for **execution**.
 
 ## 🎯 Why Codex Worker?
 
@@ -53,8 +69,11 @@ pip install -e .
 
 ### Requirements
 - Python 3.8+
-- `codex` CLI or `gemini` CLI installed
-- Typer, Rich (installed automatically)
+- OpenAI Codex CLI:
+  ```bash
+  npm install -g @openai/codex
+  ```
+- Typer, Rich (installed automatically with pip install)
 
 ## 🎮 Usage Examples
 
@@ -99,18 +118,15 @@ codex-worker large-tasks/ --concurrency 8
 # Automatically skips the 30 completed files
 ```
 
-### Different AI Engines
+### Different Models
 
 ```bash
-# Use Gemini instead of Codex
-codex-worker --engine gemini --model gemini-2.5-flash
-
 # Use a specific Codex model
-codex-worker --engine codex --model o4
+codex-worker --model o4
 
-# Mix and match in different directories
-codex-worker simple-tasks/ --engine gemini --model gemini-2.5-flash
-codex-worker complex-tasks/ --engine codex --model o4
+# Use different models for different task complexity
+codex-worker simple-tasks/ --model o4-mini
+codex-worker complex-tasks/ --model o4
 ```
 
 ### Safety Modes
@@ -242,7 +258,6 @@ codex-worker doc-*.md --concurrency 3
 
 ```bash
 export CODEX_CMD=/path/to/codex     # Custom codex binary
-export GEMINI_CMD=/path/to/gemini   # Custom gemini binary
 ```
 
 ### Command Options
@@ -250,7 +265,6 @@ export GEMINI_CMD=/path/to/gemini   # Custom gemini binary
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--pattern` | File pattern to match | `*.md` |
-| `--engine` | AI engine (codex/gemini) | `codex` |
 | `--model` | Model name | `o4-mini` |
 | `--mode` | Safety level | `read-only` |
 | `--concurrency` | Parallel workers | `1` |
@@ -287,11 +301,11 @@ codex-worker --verbose tasks/
 
 ## 🤝 Contributing
 
-We follow John Carmack's principles:
+We value:
 - **Simplicity over complexity**
-- **Delete code rather than add**
 - **Clear, obvious implementations**
 - **Minimal dependencies**
+- **Practical solutions over theoretical perfection**
 
 ## 📄 License
 
