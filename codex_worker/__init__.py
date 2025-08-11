@@ -1,9 +1,12 @@
-"""Codex Worker - Safe parallel execution of AI coding agents on your codebase."""
+"""Redirect imports to src folder."""
+import sys
+from pathlib import Path
 
-__version__ = "1.0.0"
-__author__ = "Codex Worker Contributors"
+# Add src to path
+src_path = Path(__file__).parent.parent / "src"
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
 
-from .worker import CodexWorker
-from .state import TaskState, StatePrefix
-
-__all__ = ["CodexWorker", "TaskState", "StatePrefix"]
+# Import from src
+from src import *
+from src import __version__

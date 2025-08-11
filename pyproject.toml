@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-worker"
+version = "1.0.0"
+description = "Safe parallel execution of OpenAI Codex on your codebase"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "Codex Worker Contributors"}]
+keywords = ["ai", "codex", "openai", "automation", "parallel", "batch", "coding", "agents", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Code Generators",
+    "Topic :: System :: Distributed Computing",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yigitkonur/codex-worker"
+"Bug Reports" = "https://github.com/yigitkonur/codex-worker/issues"
+"Source" = "https://github.com/yigitkonur/codex-worker"
+
+[project.scripts]
+codex-worker = "codex_worker.cli:main"
+cw = "codex_worker.cli:main"
+
+[tool.setuptools]
+package-dir = {"codex_worker" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["codex_worker"]
+
+[tool.black]
+line-length = 100
+target-version = ['py38']
+
+[tool.ruff]
+line-length = 100
+target-version = "py38"
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true

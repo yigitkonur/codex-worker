@@ -7,7 +7,7 @@ from pathlib import Path
 # Read version from package
 version = "1.0.0"
 try:
-    with open("codex_worker/__init__.py", "r") as f:
+    with open("src/__init__.py", "r") as f:
         for line in f:
             if line.startswith("__version__"):
                 version = line.split("=")[1].strip().strip('"').strip("'")
@@ -24,16 +24,17 @@ if readme.exists():
 setup(
     name="codex-worker",
     version=version,
-    description="Safe parallel execution of AI coding agents on your codebase",
+    description="Safe parallel execution of OpenAI Codex on your codebase",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Codex Worker Contributors",
     author_email="",
-    url="https://github.com/yourusername/codex-worker",
+    url="https://github.com/yigitkonur/codex-worker",
     license="MIT",
     python_requires=">=3.8",
     
-    packages=find_packages(exclude=["tests", "tests.*"]),
+    package_dir={"codex_worker": "src"},
+    packages=["codex_worker"],
     
     install_requires=[
         "typer[all]>=0.9.0",
@@ -78,7 +79,7 @@ setup(
     keywords=[
         "ai",
         "codex",
-        "gemini",
+        "openai",
         "automation",
         "parallel",
         "batch",
@@ -89,8 +90,8 @@ setup(
     ],
     
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/codex-worker/issues",
-        "Source": "https://github.com/yourusername/codex-worker",
-        "Documentation": "https://github.com/yourusername/codex-worker#readme",
+        "Bug Reports": "https://github.com/yigitkonur/codex-worker/issues",
+        "Source": "https://github.com/yigitkonur/codex-worker",
+        "Documentation": "https://github.com/yigitkonur/codex-worker#readme",
     },
 )
