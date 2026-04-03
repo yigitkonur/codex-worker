@@ -99,6 +99,10 @@ function renderReadResult(result: Record<string, unknown>): string {
   const localThread = (result.localThread as Record<string, unknown> | undefined) ?? undefined;
   const turns = Array.isArray(result.turns) ? result.turns as Array<Record<string, unknown>> : [];
   const pendingRequests = Array.isArray(result.pendingRequests) ? result.pendingRequests as Array<Record<string, unknown>> : [];
+  const artifacts = (result.artifacts as Record<string, unknown> | undefined) ?? undefined;
+  const logTail = Array.isArray(artifacts?.displayLog)
+    ? artifacts.displayLog as string[]
+    : (Array.isArray(artifacts?.logTail) ? artifacts.logTail as string[] : []);
 
   const lines = [
     `Thread: ${String(thread.id ?? localThread?.id ?? 'unknown')}`,
@@ -109,6 +113,17 @@ function renderReadResult(result: Record<string, unknown>): string {
     `Pending requests: ${pendingRequests.length}`,
   ];
 
+  if (artifacts?.transcriptPath || artifacts?.logPath) {
+    lines.push('');
+    lines.push('Artifacts:');
+    if (typeof artifacts.transcriptPath === 'string') {
+      lines.push(`- transcript: ${shortenPath(artifacts.transcriptPath)}`);
+    }
+    if (typeof artifacts.logPath === 'string') {
+      lines.push(`- log: ${shortenPath(artifacts.logPath)}`);
+    }
+  }
+
   if (turns.length > 0) {
     lines.push('');
     lines.push('Recent turns:');
@@ -117,6 +132,28 @@ function renderReadResult(result: Record<string, unknown>): string {
     }
   }
 
+  if (logTail.length > 0) {
+    lines.push('');
+    lines.push('Recent log:');
+    for (const line of logTail) {
+      lines.push(line);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function renderLogResult(result: Record<string, unknown>): string {
+  const artifacts = (result.artifacts as Record<string, unknown> | undefined) ?? {};
+  const logTail = Array.isArray(artifacts.displayLog)
+    ? artifacts.displayLog as string[]
+    : (Array.isArray(artifacts.logTail) ? artifacts.logTail as string[] : []);
+  const lines: string[] = [];
+  if (typeof artifacts.logPath === 'string') {
+    lines.push(`Log: ${shortenPath(artifacts.logPath)}`);
+  }
+  lines.push('');
+  lines.push(...(logTail.length > 0 ? logTail : ['(no log lines yet)']));
   return lines.join('\n');
 }
 
@@ -260,13 +297,34 @@ program
   .command('read')
   .argument('<thread-id>')
   .description('Friendly alias: read thread state with turns')
-  .action(async (threadId) => {
-    const result = await sendDaemonRequest('read', { threadId });
+  .option('--tail <n>', 'Number of transcript/log lines to include')
+  .action(async (threadId, options) => {
+    const result = await sendDaemonRequest('read', {
+      threadId,
+      tailLines: parseInteger(options.tail, 'tail'),
+    });
     if (getOutputFormat(program) === 'json') {
       printJson(result);
       return;
     }
     process.stdout.write(`${renderReadResult(result)}\n`);
+  });
+
+program
+  .command('logs')
+  .argument('<thread-id>')
+  .description('Read recent execution log lines for a thread')
+  .option('--tail <n>', 'Number of log lines to include')
+  .action(async (threadId, options) => {
+    const result = await sendDaemonRequest('read', {
+      threadId,
+      tailLines: parseInteger(options.tail, 'tail') ?? 50,
+    });
+    if (getOutputFormat(program) === 'json') {
+      printJson(result);
+      return;
+    }
+    process.stdout.write(`${renderLogResult(result)}\n`);
   });
 
 const thread = program.command('thread').description('Protocol-first thread operations');
@@ -296,10 +354,12 @@ thread
   .command('read')
   .argument('<thread-id>')
   .option('--include-turns', 'Include turns from app-server history')
+  .option('--tail <n>', 'Number of transcript/log lines to include')
   .action(async (threadId, options) => {
     const result = await sendDaemonRequest('thread.read', {
       threadId,
       includeTurns: options.includeTurns ?? false,
+      tailLines: parseInteger(options.tail, 'tail'),
     });
     if (getOutputFormat(program) === 'json') {
       printJson(result);

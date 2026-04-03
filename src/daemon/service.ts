@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 
 import { classifyWorkerFailure } from '../core/failure-classifier.js';
 import { appendFleetDeveloperInstructions } from '../core/fleet-mode.js';
@@ -11,7 +11,7 @@ import {
   type ModelCatalog,
   type ModelCatalogInput,
 } from '../core/model-catalog.js';
-import { logPath, ensureStateRoot } from '../core/paths.js';
+import { ensureStateRoot, logPath, transcriptPath } from '../core/paths.js';
 import { ProfileFaultPlanner } from '../core/profile-faults.js';
 import { ProfileManager } from '../core/profile-manager.js';
 import { PersistentStore } from '../core/store.js';
@@ -117,6 +117,101 @@ function parseJsonObject(value: string | undefined): Record<string, unknown> | u
     throw new Error('Expected a JSON object.');
   }
   return parsed;
+}
+
+async function readTailLines(filePath: string, limit: number): Promise<string[]> {
+  try {
+    const raw = await readFile(filePath, 'utf8');
+    return raw
+      .split(/\r?\n/g)
+      .map((line) => line.trimEnd())
+      .filter((line) => line.length > 0)
+      .slice(-limit);
+  } catch {
+    return [];
+  }
+}
+
+async function readTailJson(filePath: string, limit: number): Promise<Array<Record<string, unknown>>> {
+  const lines = await readTailLines(filePath, limit);
+  const parsed: Array<Record<string, unknown>> = [];
+  for (const line of lines) {
+    try {
+      const value = JSON.parse(line) as unknown;
+      if (isRecord(value)) {
+        parsed.push(value);
+      }
+    } catch {
+      // ignore malformed lines
+    }
+  }
+  return parsed;
+}
+
+function buildDisplayLog(
+  recentEvents: Array<Record<string, unknown>>,
+  rawLogTail: string[],
+): string[] {
+  const lines: string[] = [];
+  let assistantBuffer = '';
+
+  const pushLine = (line: string) => {
+    if (line.length === 0) {
+      return;
+    }
+    if (lines.at(-1) === line) {
+      return;
+    }
+    lines.push(line);
+  };
+
+  const flushAssistant = () => {
+    if (!assistantBuffer) {
+      return;
+    }
+    pushLine(assistantBuffer);
+    assistantBuffer = '';
+  };
+
+  for (const event of recentEvents) {
+    if (event.type === 'assistant.delta' && typeof event.delta === 'string') {
+      assistantBuffer += event.delta;
+      continue;
+    }
+
+    flushAssistant();
+
+    if (event.type === 'user') {
+      const prompt = typeof event.prompt === 'string'
+        ? event.prompt
+        : (typeof event.text === 'string' ? event.text : undefined);
+      if (prompt) {
+        pushLine(`> ${prompt}`);
+      }
+      continue;
+    }
+
+    if (event.type === 'request' && typeof event.method === 'string') {
+      pushLine(`request: ${event.method}`);
+      continue;
+    }
+
+    if (event.type === 'notification' && event.method === 'item/completed') {
+      const params = isRecord(event.params) ? event.params : undefined;
+      const item = params && isRecord(params.item) ? params.item : undefined;
+      if (item?.type === 'agentMessage' && typeof item.text === 'string' && item.text.length > 0) {
+        assistantBuffer = '';
+        pushLine(item.text);
+      }
+    }
+  }
+
+  flushAssistant();
+
+  if (lines.length > 0) {
+    return lines;
+  }
+  return rawLogTail;
 }
 
 export class CliCodexWorkerService {
@@ -249,11 +344,27 @@ export class CliCodexWorkerService {
       remoteThread = undefined;
     }
 
+    const tailLines = typeof args.tailLines === 'number' && Number.isFinite(args.tailLines)
+      ? Math.max(1, Math.min(200, Math.trunc(args.tailLines)))
+      : 20;
+    const transcriptFilePath = transcriptPath(localThread.cwd, localThread.id);
+    const logFilePath = logPath(localThread.cwd, localThread.id);
+
+    const recentEvents = await readTailJson(transcriptFilePath, tailLines);
+    const rawLogTail = await readTailLines(logFilePath, tailLines);
+
     return {
       thread: remoteThread ?? localThread,
       localThread,
       turns: this.store.listTurns(localThread.id),
       pendingRequests: this.store.listPendingRequests('pending').filter((entry) => entry.threadId === localThread.id),
+      artifacts: {
+        transcriptPath: transcriptFilePath,
+        logPath: logFilePath,
+        recentEvents,
+        logTail: rawLogTail,
+        displayLog: buildDisplayLog(recentEvents, rawLogTail),
+      },
       actions: this.buildActions(localThread.id),
     };
   }
@@ -540,6 +651,7 @@ export class CliCodexWorkerService {
     return await this.threadRead({
       threadId,
       includeTurns: true,
+      tailLines: typeof args.tailLines === 'number' ? args.tailLines : undefined,
     });
   }
 
