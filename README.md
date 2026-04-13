@@ -1,101 +1,102 @@
-# cli-codex-worker
+# codex-worker
 
-`cli-codex-worker` is a daemon-backed CLI that orchestrates the official `codex app-server --listen stdio://` runtime.
+`codex-worker` is a daemon-backed CLI for driving the official `codex app-server --listen stdio://` runtime from scripts, local automation, and long-running operator workflows.
 
-It provides:
-
-- Protocol-first commands for thread/turn/model/account/request flows
-- Friendly aliases (`run`, `send`, `read`) for file-based prompt workflows
-- Pending server-request persistence (`request list/read/respond`)
-- Multi-account failover across `CODEX_HOME_DIRS` with cooldown tracking
-- Model validation/remap from live `model/list`
+It wraps the app-server protocol in a stable shell surface with local state, resumable threads, pending-request handling, and multi-profile failover.
 
 ## Requirements
 
 - Node.js 22+
-- `codex` CLI installed and logged in
+- `codex` CLI installed and authenticated
 
 ## Install
+
+Global install:
+
+```bash
+npm install -g codex-worker
+```
+
+One-off execution:
+
+```bash
+npx codex-worker doctor
+```
+
+From source:
 
 ```bash
 npm install
 npm run build
+node dist/src/cli.js --help
 ```
 
-## Core Commands
+## CLI Surface
 
 ```text
-cli-codex-worker daemon start|status|stop
-cli-codex-worker thread start|resume|read|list
-cli-codex-worker turn start|steer|interrupt
-cli-codex-worker model list
-cli-codex-worker account read|rate-limits
-cli-codex-worker skills list
-cli-codex-worker app list
-cli-codex-worker request list|read|respond
-cli-codex-worker wait
-cli-codex-worker doctor
+codex-worker run <task.md>
+codex-worker send <thread-id> <message.md>
+codex-worker read <thread-id>
+codex-worker logs <thread-id>
+codex-worker thread start|resume|read|list
+codex-worker turn start|steer|interrupt
+codex-worker model list
+codex-worker account read|rate-limits
+codex-worker skills list
+codex-worker app list
+codex-worker request list|read|respond
+codex-worker wait
+codex-worker doctor
+codex-worker daemon start|status|stop
 ```
 
-## Friendly Aliases
+## Common Flows
 
-```text
-cli-codex-worker run <task.md>
-cli-codex-worker send <thread-id> <message.md>
-cli-codex-worker read <thread-id>
-```
-
-These aliases still return and surface thread/turn IDs so workflow stays protocol-compatible.
-
-## Multi-Account Failover
-
-- `CODEX_HOME_DIRS` (colon-separated) controls account order.
-- Each account tracks cooldown after classified failures.
-- `CODEX_HOME` is used when `CODEX_HOME_DIRS` is not set.
-
-Example:
+Start a file-backed task:
 
 ```bash
-export CODEX_HOME_DIRS="$HOME/.codex:/tmp/second-codex-home"
+codex-worker run task.md
 ```
 
-## Fleet Toggle
-
-Set:
+Resume a thread with a follow-up prompt:
 
 ```bash
-export CODEX_ENABLE_FLEET=1
+codex-worker send <thread-id> followup.md
 ```
 
-When enabled, a `cli-codex-worker:fleet` suffix is appended to outgoing `developerInstructions` on thread-start/resume paths.
-
-## Pending Requests
-
-When app-server sends approval/input/auth-refresh requests, they are persisted locally and can be answered later:
+Read local thread state and recent transcript/log output:
 
 ```bash
-cli-codex-worker request list
-cli-codex-worker request read <request-id>
-cli-codex-worker request respond <request-id> --json '{"decision":"accept"}'
+codex-worker read <thread-id>
+codex-worker logs <thread-id>
 ```
 
-For tool user-input requests:
+Handle a pending approval or user-input request:
 
 ```bash
-cli-codex-worker request respond <request-id> --answer "yes"
+codex-worker request list
+codex-worker request read <request-id>
+codex-worker request respond <request-id> --json '{"decision":"accept"}'
+codex-worker request respond <request-id> --answer "yes"
 ```
 
-## Verification Commands
+## State And Environment
+
+- Default state root: `~/.codex-worker`
+- Preferred override: `CODEX_WORKER_STATE_DIR`
+- Backward-compatible fallback override: `CLI_CODEX_WORKER_STATE_DIR`
+- Profile discovery: `CODEX_HOME_DIRS` or `CODEX_HOME`
+- Fleet toggle: `CODEX_ENABLE_FLEET=1`
+
+When fleet mode is enabled, `codex-worker` appends a `[codex-worker:fleet]` suffix to outgoing developer instructions on thread start and resume paths.
+
+## Development
 
 ```bash
 npm run build
 npm test
 npm run smoke
+node --import tsx src/cli.ts --help
 ```
 
-`npm run smoke` validates a live flow with the installed `codex` binary:
-
-1. initialize
-2. model/list
-3. run alias (thread + turn) writing a file
-4. thread/read and output file check
+`npm run smoke` exercises a live local flow against the installed `codex` binary.

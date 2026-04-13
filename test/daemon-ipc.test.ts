@@ -43,14 +43,17 @@ async function send(socketPath: string, token: string, command: string): Promise
 test('daemon socket responds to daemon.status', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'cli-codex-worker-state-'));
   const token = 'token-test';
+  const originalNewState = process.env.CODEX_WORKER_STATE_DIR;
   const originalState = process.env.CLI_CODEX_WORKER_STATE_DIR;
+  const originalNewSocket = process.env.CODEX_WORKER_DAEMON_SOCKET;
   const originalSocket = process.env.CLI_CODEX_WORKER_DAEMON_SOCKET;
+  const originalNewToken = process.env.CODEX_WORKER_DAEMON_TOKEN;
   const originalToken = process.env.CLI_CODEX_WORKER_DAEMON_TOKEN;
 
-  process.env.CLI_CODEX_WORKER_STATE_DIR = stateDir;
+  process.env.CODEX_WORKER_STATE_DIR = stateDir;
   const socketPath = join(stateDir, 'daemon.sock');
-  process.env.CLI_CODEX_WORKER_DAEMON_SOCKET = socketPath;
-  process.env.CLI_CODEX_WORKER_DAEMON_TOKEN = token;
+  process.env.CODEX_WORKER_DAEMON_SOCKET = socketPath;
+  process.env.CODEX_WORKER_DAEMON_TOKEN = token;
 
   void runDaemonServer();
   await waitForSocket(socketPath);
@@ -62,8 +65,11 @@ test('daemon socket responds to daemon.status', async () => {
   const stop = await send(socketPath, token, 'daemon.stop');
   assert.equal(stop.type, 'result');
 
+  process.env.CODEX_WORKER_STATE_DIR = originalNewState;
   process.env.CLI_CODEX_WORKER_STATE_DIR = originalState;
+  process.env.CODEX_WORKER_DAEMON_SOCKET = originalNewSocket;
   process.env.CLI_CODEX_WORKER_DAEMON_SOCKET = originalSocket;
+  process.env.CODEX_WORKER_DAEMON_TOKEN = originalNewToken;
   process.env.CLI_CODEX_WORKER_DAEMON_TOKEN = originalToken;
 
   const root = ensureStateRoot();

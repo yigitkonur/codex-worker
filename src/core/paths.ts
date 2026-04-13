@@ -11,8 +11,9 @@ export interface StatePaths {
 }
 
 export function stateRootDir(): string {
-  const explicitRoot = process.env.CLI_CODEX_WORKER_STATE_DIR?.trim();
-  return explicitRoot || join(homedir(), '.cli-codex-worker');
+  const explicitRoot = process.env.CODEX_WORKER_STATE_DIR?.trim()
+    ?? process.env.CLI_CODEX_WORKER_STATE_DIR?.trim();
+  return explicitRoot || join(homedir(), '.codex-worker');
 }
 
 export function ensureStateRoot(): StatePaths {

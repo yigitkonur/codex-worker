@@ -1,4 +1,5 @@
 dist
 node_modules
+mcp-codex-worker
 .DS_Store
 *.tgz

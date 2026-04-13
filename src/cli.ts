@@ -265,7 +265,7 @@ async function commandSend(threadId: string, messageFile: string, options: { asy
 const program = new Command();
 
 program
-  .name('cli-codex-worker')
+  .name('codex-worker')
   .description('Daemon-backed Codex app-server worker CLI')
   .version(pkg.version)
   .option('--output <format>', 'Output format: text or json');

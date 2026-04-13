@@ -31,6 +31,9 @@ test('run alias maps to thread start + turn start and returns ids in async mode'
   assert.equal(result.turnId, 'turn-1');
   assert.equal(result.status, 'inProgress');
   assert.equal(typeof result.actions, 'object');
+  assert.equal((result.actions as Record<string, string>).read, 'codex-worker read thread-1');
+  assert.equal((result.actions as Record<string, string>).send, 'codex-worker send thread-1 prompt.md');
+  assert.equal((result.actions as Record<string, string>).requests, 'codex-worker request list');
 
   process.env.CLI_CODEX_WORKER_STATE_DIR = originalState;
   process.env.CODEX_HOME_DIRS = originalHomes;

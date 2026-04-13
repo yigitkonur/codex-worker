@@ -2,22 +2,22 @@
 
 ## Scope
 
-- This repo is a standalone Node 22+/TypeScript ESM CLI package named `cli-codex-worker`.
-- The primary surface is the CLI in `src/cli.ts`; `bin/cli-codex-worker.mjs` loads that source entrypoint through `tsx`.
+- This repo is a standalone Node 22+/TypeScript ESM CLI package named `codex-worker`.
+- The primary surface is the CLI in `src/cli.ts`; `bin/codex-worker.mjs` loads the compiled CLI entrypoint from `dist/src/cli.js`.
 - Keep command names and output shape stable unless the user explicitly asks for a CLI change.
 - Current CLI surface from `--help`: `run`, `send`, `read`, `logs`, `thread start|resume|read|list`, `turn start|steer|interrupt`, `model list`, `account read|rate-limits`, `skills list`, `app list`, `request list|read|respond`, `wait`, `doctor`, `daemon start|status|stop`.
 - There is no dedicated top-level `job` command in the current CLI. Jobs are local records returned in turn payloads, and `wait` can target `--job-id`.
 
 ## Runtime Entry Points
 
-- Preferred entrypoints: `bin/cli-codex-worker.mjs`, `node --import tsx src/cli.ts`, and `npm run serve` for the hidden `daemon-run` path.
+- Preferred entrypoints: `bin/codex-worker.mjs`, `node --import tsx src/cli.ts`, and `npm run serve` for the hidden `daemon-run` path.
 - Programmatic exports live in `src/index.ts`: `sendDaemonRequest`, `ensureDaemonMeta`, `daemonIsRunning`, `CliCodexWorkerService`, and `PersistentStore`.
 - Daemon autostart goes through `src/daemon/client.ts`; preserve the socket/token handshake written to `daemon.json`.
 - The runtime launches `codex app-server --listen stdio://` from `src/runtime/app-server.ts` and injects `CODEX_HOME` for the selected profile.
 
 ## State And Operator Workflow
 
-- State root defaults to `~/.cli-codex-worker`; `CLI_CODEX_WORKER_STATE_DIR` overrides it.
+- State root defaults to `~/.codex-worker`; `CODEX_WORKER_STATE_DIR` overrides it, with `CLI_CODEX_WORKER_STATE_DIR` kept as a backward-compatible fallback.
 - Persistent files live under that root: `registry.json`, `daemon.json`, `daemon.sock`, `workspaces/<workspace-hash>/threads/<thread-id>.jsonl`, and `workspaces/<workspace-hash>/logs/<thread-id>.output`.
 - `read` and `thread read` are session-reader commands: they surface local thread/turn/request state plus transcript/log artifact paths and recent tails.
 - `logs` prefers the readable deduplicated `displayLog` synthesized from transcript events and falls back to raw log tail.

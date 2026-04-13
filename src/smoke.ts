@@ -11,7 +11,7 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function main(): Promise<void> {
-  const workspace = await mkdtemp(join(tmpdir(), 'cli-codex-worker-smoke-'));
+  const workspace = await mkdtemp(join(tmpdir(), 'codex-worker-smoke-'));
   const outputPath = join(workspace, 'smoke-output.txt');
   const promptPath = join(workspace, 'prompt.md');
 

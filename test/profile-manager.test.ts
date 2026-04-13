@@ -33,6 +33,6 @@ test('fleet developer instructions are appended when enabled', () => {
   process.env.CODEX_ENABLE_FLEET = '1';
   const output = appendFleetDeveloperInstructions('base instructions');
   assert.match(output ?? '', /base instructions/);
-  assert.match(output ?? '', /\[cli-codex-worker:fleet\]/);
+  assert.match(output ?? '', /\[codex-worker:fleet\]/);
   process.env.CODEX_ENABLE_FLEET = original;
 });

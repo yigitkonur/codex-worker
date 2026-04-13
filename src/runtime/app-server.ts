@@ -47,7 +47,7 @@ export class AppServerClient extends EventEmitter {
   constructor(
     readonly cwd: string,
     readonly codexHome: string,
-    private readonly clientName = 'cli-codex-worker',
+    private readonly clientName = 'codex-worker',
   ) {
     super();
   }

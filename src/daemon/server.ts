@@ -11,10 +11,13 @@ function writeEnvelope(socket: net.Socket, envelope: DaemonResponseEnvelope): vo
 }
 
 export async function runDaemonServer(): Promise<void> {
-  const socketPath = process.env.CLI_CODEX_WORKER_DAEMON_SOCKET ?? ensureStateRoot().socketPath;
-  const token = process.env.CLI_CODEX_WORKER_DAEMON_TOKEN;
+  const socketPath = process.env.CODEX_WORKER_DAEMON_SOCKET
+    ?? process.env.CLI_CODEX_WORKER_DAEMON_SOCKET
+    ?? ensureStateRoot().socketPath;
+  const token = process.env.CODEX_WORKER_DAEMON_TOKEN
+    ?? process.env.CLI_CODEX_WORKER_DAEMON_TOKEN;
   if (!token) {
-    throw new Error('Missing CLI_CODEX_WORKER_DAEMON_TOKEN');
+    throw new Error('Missing CODEX_WORKER_DAEMON_TOKEN');
   }
 
   if (existsSync(socketPath)) {

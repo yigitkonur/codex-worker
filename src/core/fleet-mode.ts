@@ -13,7 +13,7 @@ export function appendFleetDeveloperInstructions(base?: string | null): string |
 
   const suffix = [
     '',
-    '[cli-codex-worker:fleet]',
+    '[codex-worker:fleet]',
     'This request is running with fleet mode enabled.',
     'Prefer concise, independently useful progress that can be composed with parallel workers.',
   ].join('\n');

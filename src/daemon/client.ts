@@ -16,7 +16,7 @@ function cliLaunchSpec(): { command: string; args: string[] } {
   if (existsSync(compiledCliPath)) {
     return {
       command: process.execPath,
-      args: ['--import', 'tsx', compiledCliPath, 'daemon-run'],
+      args: [compiledCliPath, 'daemon-run'],
     };
   }
 
@@ -65,8 +65,8 @@ export async function ensureDaemonMeta(): Promise<DaemonMeta> {
     stdio: 'ignore',
     env: {
       ...process.env,
-      CLI_CODEX_WORKER_DAEMON_SOCKET: socketPath,
-      CLI_CODEX_WORKER_DAEMON_TOKEN: token,
+      CODEX_WORKER_DAEMON_SOCKET: socketPath,
+      CODEX_WORKER_DAEMON_TOKEN: token,
     },
   });
   child.unref();
@@ -79,7 +79,7 @@ export async function ensureDaemonMeta(): Promise<DaemonMeta> {
     await delay(100);
   }
 
-  throw new Error('Timed out waiting for cli-codex-worker daemon to start');
+  throw new Error('Timed out waiting for codex-worker daemon to start');
 }
 
 export async function sendDaemonRequest(

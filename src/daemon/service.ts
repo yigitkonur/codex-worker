@@ -385,7 +385,7 @@ export class CliCodexWorkerService {
     const resolution = await this.resolveModelForCwd(cwd, stringValue(args.model));
     const started = await this.startThreadOnHealthyProfile(cwd, resolution.resolved, {
       developerInstructions: [
-        'you are cli-codex-worker.',
+        'you are codex-worker.',
         'execute the file-backed task exactly and avoid unrelated work.',
       ].join(' '),
       taskPrompt: content,
@@ -1134,9 +1134,9 @@ export class CliCodexWorkerService {
 
   private buildActions(threadId: string): Record<string, string> {
     return {
-      read: `cli-codex-worker read ${threadId}`,
-      send: `cli-codex-worker send ${threadId} prompt.md`,
-      requests: 'cli-codex-worker request list',
+      read: `codex-worker read ${threadId}`,
+      send: `codex-worker send ${threadId} prompt.md`,
+      requests: 'codex-worker request list',
     };
   }
 
