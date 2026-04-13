@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { CliCodexWorkerService } from '../src/daemon/service.js';
+import { FakeAppServerClient } from './helpers/fake-app-server.js';
 
 test('read exposes transcript and execution log artifacts with recent tails', async () => {
   const stateDir = await mkdtemp(join(tmpdir(), 'cli-codex-worker-state-'));
@@ -13,7 +14,10 @@ test('read exposes transcript and execution log artifacts with recent tails', as
   process.env.CLI_CODEX_WORKER_STATE_DIR = stateDir;
   process.env.CODEX_HOME_DIRS = '/tmp/fake-codex-home';
 
-  const service = new CliCodexWorkerService();
+  const fake = new FakeAppServerClient('/tmp/workspace', '/tmp/fake-codex-home');
+  const service = new CliCodexWorkerService({
+    connectionFactory: () => fake as never,
+  });
   await service.initialize();
 
   service.store.upsertThread({
