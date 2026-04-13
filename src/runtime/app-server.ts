@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
+import { readPackageMetadata } from '../core/package-meta.js';
+
 export type RpcId = string | number;
 
 export interface RpcResultMessage {
@@ -25,6 +27,8 @@ interface PendingRequest {
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
 }
+
+const pkg = readPackageMetadata(import.meta.url);
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -91,7 +95,7 @@ export class AppServerClient extends EventEmitter {
       clientInfo: {
         name: this.clientName,
         title: this.clientName,
-        version: '0.1.0',
+        version: pkg.version,
       },
       capabilities: {
         experimentalApi: false,

@@ -5,8 +5,8 @@ import process from 'node:process';
 
 import { Command } from 'commander';
 
-import pkg from '../package.json' with { type: 'json' };
 import { readMarkdownFile } from './core/markdown.js';
+import { readPackageMetadata } from './core/package-meta.js';
 import { daemonIsRunning, ensureDaemonMeta, sendDaemonRequest } from './daemon/client.js';
 import { runDaemonServer } from './daemon/server.js';
 import { inspectDoctor } from './doctor.js';
@@ -262,6 +262,7 @@ async function commandSend(threadId: string, messageFile: string, options: { asy
   process.stdout.write(`${renderTurnResult(result)}\n`);
 }
 
+const pkg = readPackageMetadata(import.meta.url);
 const program = new Command();
 
 program
