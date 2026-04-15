@@ -1,6 +1,6 @@
 {
   "name": "codex-worker",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Daemon-backed Codex app-server CLI worker for protocol-first thread and turn orchestration",
   "type": "module",
   "main": "dist/src/index.js",
