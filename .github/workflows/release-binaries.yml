@@ -44,6 +44,26 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
           echo "publish_branch=${PUBLISH_BRANCH}" >> "$GITHUB_OUTPUT"
 
+      - name: Wait for release tag to become visible
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          for attempt in $(seq 1 20); do
+            if git ls-remote --exit-code --tags \
+              "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" \
+              "refs/tags/${TAG}" >/dev/null 2>&1; then
+              exit 0
+            fi
+
+            echo "Waiting for ${TAG} to become visible (${attempt}/20)..."
+            sleep 3
+          done
+
+          echo "Timed out waiting for ${TAG} to become visible in ${GH_REPO}." >&2
+          exit 1
+
   prepare-binaries:
     needs: resolve-release
     uses: ./.github/workflows/binary-distribution-common.yml
