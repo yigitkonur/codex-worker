@@ -124,6 +124,22 @@ test('cw_cpu_needs_baseline reports false when avx2 is present', () => {
   assert.equal(result.stdout.trim(), 'no');
 });
 
+test('install.sh runs correctly when piped into bash -s', () => {
+  const tempDir = mkdtempSync(join(tmpdir(), 'codex-worker-install-pipe-'));
+  try {
+    const result = spawnSync(
+      'bash',
+      ['-lc', `cat "${installScriptPath}" | bash -s -- --dry-run --install-dir "${tempDir}"`],
+      { encoding: 'utf8' },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /install_dir=/);
+    assert.match(result.stdout, new RegExp(tempDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('install.sh installs and then skips when the same version is already present', async () => {
   const tempDir = mkdtempSync(join(tmpdir(), 'codex-worker-install-e2e-'));
   const installDir = join(tempDir, 'bin');

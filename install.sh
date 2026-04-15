@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+cw_should_run_main() {
+  [[ "${#BASH_SOURCE[@]}" -eq 0 || "${BASH_SOURCE[0]}" == "$0" ]]
+}
+
+if cw_should_run_main; then
   set -euo pipefail
 fi
 
@@ -527,6 +531,6 @@ EOF
   fi
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if cw_should_run_main; then
   cw_main "$@"
 fi
