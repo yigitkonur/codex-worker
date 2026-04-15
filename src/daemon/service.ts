@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 import { readFile, writeFile } from 'node:fs/promises';
 
+import { readCodexConfig, type CodexConfigDefaults } from '../core/codex-config.js';
 import { classifyWorkerFailure } from '../core/failure-classifier.js';
 import { appendFleetDeveloperInstructions } from '../core/fleet-mode.js';
 import {
@@ -220,11 +221,21 @@ export class CliCodexWorkerService {
   readonly connectionFactory: (cwd: string, codexHome: string) => AppServerLike;
   profileManager!: ProfileManager;
   faultPlanner!: ProfileFaultPlanner;
+  private readonly configCache = new Map<string, CodexConfigDefaults>();
 
   constructor(options: CliCodexWorkerServiceOptions = {}) {
     this.connectionFactory = options.connectionFactory ?? ((cwd, codexHome) => (
       new AppServerClient(cwd, codexHome)
     ));
+  }
+
+  private getConfigFor(codexHome: string): CodexConfigDefaults {
+    let cfg = this.configCache.get(codexHome);
+    if (cfg === undefined) {
+      cfg = readCodexConfig(codexHome);
+      this.configCache.set(codexHome, cfg);
+    }
+    return cfg;
   }
 
   async initialize(): Promise<void> {
@@ -281,11 +292,12 @@ export class CliCodexWorkerService {
     const cwd = stringValue(args.cwd);
     const started = await this.startClientForThread(localThread, cwd);
     try {
+      const cfg = this.getConfigFor(started.profile.codexHome);
       const params: Record<string, unknown> = {
         threadId: localThread.id,
-        modelProvider: 'openai',
-        approvalPolicy: 'on-request',
-        sandbox: 'workspace-write',
+        modelProvider: cfg.modelProvider ?? 'openai',
+        approvalPolicy: cfg.approvalPolicy ?? 'on-request',
+        sandbox: cfg.sandboxMode ?? 'workspace-write',
         persistExtendedHistory: false,
       };
       let remappedFrom: string | undefined;
@@ -306,7 +318,7 @@ export class CliCodexWorkerService {
         ...localThread,
         cwd: stringValue(remoteThread.cwd) ?? cwd ?? localThread.cwd,
         model: stringValue(response.model) ?? (params.model as string | undefined) ?? localThread.model,
-        modelProvider: stringValue(response.modelProvider) ?? 'openai',
+        modelProvider: stringValue(response.modelProvider) ?? cfg.modelProvider ?? 'openai',
         updatedAt: nowIso(),
       });
       await this.persistProfiles();
@@ -430,11 +442,12 @@ export class CliCodexWorkerService {
     }
     const thread = this.resolveThread(threadId);
     const started = await this.startClientForThread(thread);
+    const sendCfg = this.getConfigFor(started.profile.codexHome);
     await started.client.request('thread/resume', {
       threadId: thread.id,
-      modelProvider: 'openai',
-      approvalPolicy: 'on-request',
-      sandbox: 'workspace-write',
+      modelProvider: sendCfg.modelProvider ?? 'openai',
+      approvalPolicy: sendCfg.approvalPolicy ?? 'on-request',
+      sandbox: sendCfg.sandboxMode ?? 'workspace-write',
       persistExtendedHistory: false,
     });
     const execution = await this.launchTurn({
@@ -478,11 +491,12 @@ export class CliCodexWorkerService {
     const thread = this.resolveThread(threadId);
     const prompt = stringValue(args.prompt) ?? stringValue(args.content) ?? '';
     const started = await this.startClientForThread(thread);
+    const steerCfg = this.getConfigFor(started.profile.codexHome);
     await started.client.request('thread/resume', {
       threadId: thread.id,
-      modelProvider: 'openai',
-      approvalPolicy: 'on-request',
-      sandbox: 'workspace-write',
+      modelProvider: steerCfg.modelProvider ?? 'openai',
+      approvalPolicy: steerCfg.approvalPolicy ?? 'on-request',
+      sandbox: steerCfg.sandboxMode ?? 'workspace-write',
       persistExtendedHistory: false,
     });
     const execution = await this.launchTurn({
@@ -542,6 +556,16 @@ export class CliCodexWorkerService {
   }
 
   async accountRateLimits(args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const candidates = this.profileManager.getCandidateProfiles();
+    const allOptOut = candidates.length > 0 && candidates.every(
+      (profile) => this.getConfigFor(profile.codexHome).requiresOpenaiAuth === false,
+    );
+    if (allOptOut) {
+      return {
+        data: null,
+        note: 'rate limits unavailable: requires_openai_auth=false in config.toml',
+      };
+    }
     return await this.requestHealthyProfile('account/rateLimits/read', args);
   }
 
@@ -686,14 +710,15 @@ export class CliCodexWorkerService {
       }
 
       const client = this.connectionFactory(cwd, profile.codexHome);
+      const startCfg = this.getConfigFor(profile.codexHome);
       try {
         await client.start();
         const response = await client.request('thread/start', {
           cwd,
           model,
-          modelProvider: 'openai',
-          approvalPolicy: 'on-request',
-          sandbox: 'workspace-write',
+          modelProvider: startCfg.modelProvider ?? 'openai',
+          approvalPolicy: startCfg.approvalPolicy ?? 'on-request',
+          sandbox: startCfg.sandboxMode ?? 'workspace-write',
           baseInstructions: options.baseInstructions,
           developerInstructions: appendFleetDeveloperInstructions(options.developerInstructions)
             ?? (options.taskPrompt ? appendFleetDeveloperInstructions(options.taskPrompt) : undefined),
@@ -710,7 +735,7 @@ export class CliCodexWorkerService {
           cwd: stringValue(remoteThread.cwd) ?? cwd,
           codexHome: profile.codexHome,
           model: stringValue(response.model) ?? model,
-          modelProvider: stringValue(response.modelProvider) ?? 'openai',
+          modelProvider: stringValue(response.modelProvider) ?? startCfg.modelProvider ?? 'openai',
           status: this.mapThreadStatus(remoteThread.status),
           createdAt: timestamp,
           updatedAt: timestamp,
@@ -1043,9 +1068,12 @@ export class CliCodexWorkerService {
     remappedFrom?: string | undefined;
   }> {
     const catalog = await this.loadModelCatalog(cwd);
-    const resolution = resolveRequestedModel(requestedModel ?? DEFAULT_MODEL, catalog);
+    const firstProfile = this.profileManager.getCandidateProfiles()[0];
+    const configModel = firstProfile ? this.getConfigFor(firstProfile.codexHome).model : undefined;
+    const fallbackModel = requestedModel ?? configModel ?? DEFAULT_MODEL;
+    const resolution = resolveRequestedModel(fallbackModel, catalog);
     if (!resolution) {
-      throw new Error(`Unsupported model "${requestedModel ?? DEFAULT_MODEL}". ${describeAllowedModels(catalog)}`);
+      throw new Error(`Unsupported model "${fallbackModel}". ${describeAllowedModels(catalog)}`);
     }
     return resolution;
   }
