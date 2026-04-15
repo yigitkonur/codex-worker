@@ -1,26 +1,26 @@
 class CodexWorker < Formula
   desc "Daemon-backed Codex app-server worker CLI"
   homepage "https://github.com/yigitkonur/codex-worker"
-  version "0.1.17"
+  version "0.1.18"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/yigitkonur/codex-worker/releases/download/v0.1.17/codex-worker-darwin-arm64"
-      sha256 "2cf8335c7a10db58a803d222b05a7abee8318c3efb75eb15421aa56d51092e49"
+      url "https://github.com/yigitkonur/codex-worker/releases/download/v0.1.18/codex-worker-darwin-arm64"
+      sha256 "3aae139de03c8f4820c6c858b6c0adaab3c24166b2ea26b99a34c30b9797526d"
     else
-      url "https://github.com/yigitkonur/codex-worker/releases/download/v0.1.17/codex-worker-darwin-x64"
-      sha256 "694bdf9a1ea1571a8e760c16b0fa4857e32d5c3156d35abe151e17b937e70701"
+      url "https://github.com/yigitkonur/codex-worker/releases/download/v0.1.18/codex-worker-darwin-x64"
+      sha256 "9a053796049cacd5e2aa62675cbe832c16eb3e453139edc89d77086bc44ed510"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/yigitkonur/codex-worker/releases/download/v0.1.17/codex-worker-linux-arm64"
-      sha256 "55ba4a315bec2bbdd46b8b860e9a45f236aafd1091ca0ec2b697d0c28453f5dc"
+      url "https://github.com/yigitkonur/codex-worker/releases/download/v0.1.18/codex-worker-linux-arm64"
+      sha256 "912c178b9eebfd71e3df4647a9478537c5f17c4329bd228ec11de86bd5af950f"
     else
-      url "https://github.com/yigitkonur/codex-worker/releases/download/v0.1.17/codex-worker-linux-x64"
-      sha256 "15b5e168926b0d2cc8d8d53353d09572f8ef4d50770170e22ce19a5c89661fab"
+      url "https://github.com/yigitkonur/codex-worker/releases/download/v0.1.18/codex-worker-linux-x64"
+      sha256 "f5b874b2b7e135b64ececa9c91dab13c80f230670544eb919c6a4741ae60d9b3"
     end
   end
 
