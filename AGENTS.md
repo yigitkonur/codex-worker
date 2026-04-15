@@ -103,19 +103,61 @@ jq -c 'select(.dir=="rpc_out" or .dir=="rpc_in") | {ts, dir, id, method}' <threa
 - `doctor` and `daemon status` are the fastest checks for active profiles, daemon state, socket path, and state root.
 - `CODEX_ENABLE_FLEET=1` appends fleet-specific developer instructions on thread-start and thread-resume paths.
 
+## Adding A New Provider
+
+If you're adding support for a new AI backend (GitHub Copilot SDK, Claude Code's agent API, a cloud agent service, etc.), there is a dedicated handbook at [`docs/adding-new-provider/`](./docs/adding-new-provider/). It specifies the transport + RPC contract, the event taxonomy, the three-layer logging schema, the thread/turn/job/pending-request model, and the idle-watchdog + failover semantics that any new provider must honor.
+
+Start with [`docs/adding-new-provider/README.md`](./docs/adding-new-provider/README.md) and the fit test at [`docs/adding-new-provider/00-start-here/02-when-to-add.md`](./docs/adding-new-provider/00-start-here/02-when-to-add.md). The ordered build list is at [`docs/adding-new-provider/05-implementation-checklist.md`](./docs/adding-new-provider/05-implementation-checklist.md).
+
+Short map:
+
+| Topic | Doc |
+|---|---|
+| Overview, fit test, glossary | [`00-start-here/`](./docs/adding-new-provider/00-start-here/) |
+| Transport, RPC surface, event frames, server-requests | [`01-backend-contract/`](./docs/adding-new-provider/01-backend-contract/) |
+| Three-layer log stack, raw NDJSON schema | [`02-logging/`](./docs/adding-new-provider/02-logging/) |
+| Thread / turn / job lifecycle, persistence, pending requests | [`03-lifecycle-and-state/`](./docs/adding-new-provider/03-lifecycle-and-state/) |
+| Idle watchdog, timeouts, error classification, multi-home failover | [`04-failure-handling/`](./docs/adding-new-provider/04-failure-handling/) |
+| Ordered implementation checklist | [`05-implementation-checklist.md`](./docs/adding-new-provider/05-implementation-checklist.md) |
+
+The handbook is also the authoritative reference for existing behavior — if this `AGENTS.md` and the handbook disagree, the handbook wins and this file needs an update.
+
 ## Commands
 
 - `npm run build`
 - `npm test`
 - `npm run smoke`
+- `npm run bun:compile`
+- `npm run bun:compile:target -- <target>`
+- `npm run bun:compile:all`
 - `npm run serve`
 - `node --import tsx src/cli.ts --help`
 - `node --import tsx src/cli.ts doctor --output json`
+
+## Binary Distribution
+
+- Standalone release binaries are built with `bun build --compile` via `scripts/build-binary.mjs`.
+- Local host-binary smoke path: `npm run bun:compile` then `node --import tsx --test test/compiled-binary.test.ts`.
+- `.github/workflows/release.yml` remains the live npm release publisher on `main`; do not replace it with the binary path until the staged rollout is proven on GitHub-hosted runners.
+- `.github/workflows/release.yml` now writes and uploads a `release-metadata` artifact. `.github/workflows/release-binaries.yml` depends on that artifact to recover the tag ref from the triggering `workflow_run`; do not remove or rename this handoff without updating both workflows.
+- `.github/workflows/binary-distribution-validate.yml` runs on every push, pull request, and manual dispatch and exercises the Bun binary distribution path without publishing.
+- `.github/workflows/release-binaries.yml` is the gated follow-up publisher for GitHub Release assets and optional Homebrew tap sync. It activates only when the repository variable `ENABLE_BINARY_RELEASE=true` is set.
+- `.github/workflows/binary-distribution-common.yml` is the shared workflow called by both validation and publishing; keep the target matrix, checksum generation, smoke jobs, and Homebrew formula rendering aligned there instead of duplicating logic.
+- Reusable workflow permissions are caller-bounded. If a called workflow needs `contents: write`, the caller job in `.github/workflows/release-binaries.yml` must grant it explicitly; job-level write permissions inside the reusable workflow are not enough on their own.
+- When binary publishing is enabled, the default Homebrew path is same-repository: the publish workflow updates `Formula/codex-worker.rb` on the release branch using the built-in `GITHUB_TOKEN`.
+- Keep `--bytecode` off for the Windows target too unless it has been re-verified against the current CLI entrypoint. Local verification on 2026-04-15 showed Bun 1.3.11 fails to compile `src/cli.ts` for `bun-windows-x64` with `--bytecode` enabled because the file uses top-level `await`.
+- Same-repo GitHub Release creation and asset upload are expected to use the built-in `GITHUB_TOKEN` with workflow/job `contents: write` permissions. Do not introduce a separate PAT for same-repo release publishing unless GitHub-hosted runs prove the default token is insufficient.
+- Optional dedicated Homebrew tap mirroring is different: it writes to another repository, so it still expects `HOMEBREW_TAP_TOKEN` plus `HOMEBREW_TAP_REPO`.
+- Current rollout assumption: `ENABLE_BINARY_RELEASE` and `ENABLE_HOMEBREW_TAP_SYNC` may be left `false` until remote validation passes. Do not assume the tap repo variable or secret is present.
+- Operator-facing release details and platform caveats live in [`docs/distribution/binary-releases.md`](./docs/distribution/binary-releases.md).
 
 ## Verification
 
 - Do not claim CLI behavior works unless you ran the exact command that proves it.
 - Run `npm test` for code changes. If you touched daemon/client/runtime wiring, operator workflows, or command behavior, also run `npm run smoke`.
+- If you changed the Bun binary build path, also run `npm run bun:compile` and `node --import tsx --test test/compiled-binary.test.ts`.
+- If you changed the release-target matrix, workflow helper scripts, or Homebrew formula generation, also run `npm run bun:compile:all` or the exact `npm run bun:compile:target -- <target>` path you touched, plus `node --import tsx --test test/build-binary.test.ts test/homebrew-formula.test.ts`.
 - Verify command-surface or output-format changes through the real CLI entrypoint (`node --import tsx src/cli.ts ...` or the bin script), not by code inspection alone.
 - If you changed `read` or `logs`, validate against a real thread so artifact paths and display-log output are visible.
 - If you changed profile, model, or account behavior, verify with `doctor`, `model list`, and the affected account command.
+- If you changed GitHub Actions YAML, parse the workflow files locally before claiming they are valid.

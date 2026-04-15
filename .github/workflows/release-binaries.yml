@@ -1,0 +1,47 @@
+name: release-binaries
+
+on:
+  workflow_run:
+    workflows:
+      - release
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  resolve-release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && vars.ENABLE_BINARY_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+
+    steps:
+      - name: Download release metadata from triggering run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: gh run download "${RUN_ID}" --name release-metadata --dir .release-metadata
+
+      - name: Resolve release tag ref
+        id: resolve
+        run: |
+          . .release-metadata/release.env
+          if [ -z "${version:-}" ]; then
+            echo "release metadata did not contain a version" >&2
+            exit 1
+          fi
+          echo "ref=refs/tags/v${version}" >> "$GITHUB_OUTPUT"
+
+  publish-binaries:
+    needs: resolve-release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/binary-distribution-common.yml
+    with:
+      ref: ${{ needs.resolve-release.outputs.ref }}
+      publish_branch: ${{ github.event.workflow_run.head_branch }}
+      publish_release: true
+    secrets: inherit

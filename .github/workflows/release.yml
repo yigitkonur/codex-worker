@@ -45,6 +45,18 @@ jobs:
           npm version patch --no-git-tag-version
           echo "version=$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
 
+      - name: Write release metadata
+        run: |
+          mkdir -p .release-metadata
+          printf 'version=%s\n' "${{ steps.version.outputs.version }}" > .release-metadata/release.env
+
+      - name: Upload release metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata
+          path: .release-metadata/release.env
+          if-no-files-found: error
+
       - name: Publish package
         run: npm publish --access public
         env:

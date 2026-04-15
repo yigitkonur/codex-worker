@@ -1,0 +1,304 @@
+name: binary-distribution-common
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        required: true
+        type: string
+      publish_branch:
+        required: false
+        type: string
+        default: ''
+      publish_release:
+        required: false
+        type: boolean
+        default: false
+
+env:
+  BUN_VERSION: 1.3.11
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - name: Check out target ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          VERSION="$(node -p 'require(\"./package.json\").version')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+  build-binaries:
+    needs: metadata
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { id: 'linux-x64', output_name: 'codex-worker-linux-x64' }
+          - { id: 'linux-x64-baseline', output_name: 'codex-worker-linux-x64-baseline' }
+          - { id: 'linux-arm64', output_name: 'codex-worker-linux-arm64' }
+          - { id: 'linux-x64-musl', output_name: 'codex-worker-linux-x64-musl' }
+          - { id: 'linux-arm64-musl', output_name: 'codex-worker-linux-arm64-musl' }
+          - { id: 'darwin-x64', output_name: 'codex-worker-darwin-x64' }
+          - { id: 'darwin-arm64', output_name: 'codex-worker-darwin-arm64' }
+          - { id: 'windows-x64', output_name: 'codex-worker-windows-x64.exe' }
+
+    steps:
+      - name: Check out target ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile ${{ matrix.id }}
+        run: npm run bun:compile:target -- ${{ matrix.id }}
+
+      - name: Write checksum
+        run: |
+          cd dist/bin
+          sha256sum "${{ matrix.output_name }}" > "${{ matrix.output_name }}.sha256"
+
+      - name: Upload ${{ matrix.output_name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.output_name }}
+          path: |
+            dist/bin/${{ matrix.output_name }}
+            dist/bin/${{ matrix.output_name }}.sha256
+          if-no-files-found: error
+
+  smoke-linux:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download linux-x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-worker-linux-x64
+          path: dist/bin
+
+      - name: Smoke test linux binary
+        run: |
+          chmod +x dist/bin/codex-worker-linux-x64
+          ./dist/bin/codex-worker-linux-x64 --help > /dev/null
+
+  smoke-macos:
+    needs: build-binaries
+    runs-on: macos-latest
+
+    steps:
+      - name: Download darwin-arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-worker-darwin-arm64
+          path: dist/bin
+
+      - name: Smoke test macOS binary
+        run: |
+          chmod +x dist/bin/codex-worker-darwin-arm64
+          ./dist/bin/codex-worker-darwin-arm64 --help > /dev/null
+
+  smoke-windows:
+    needs: build-binaries
+    runs-on: windows-latest
+
+    steps:
+      - name: Download windows-x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-worker-windows-x64.exe
+          path: dist/bin
+
+      - name: Smoke test Windows binary
+        shell: pwsh
+        run: .\dist\bin\codex-worker-windows-x64.exe --help | Out-Null
+
+  bundle:
+    needs:
+      - metadata
+      - build-binaries
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out target ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Download compiled artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: codex-worker-*
+          merge-multiple: true
+          path: dist/release
+
+      - name: Render Homebrew formula
+        run: |
+          DARWIN_X64_SHA="$(cut -d' ' -f1 dist/release/codex-worker-darwin-x64.sha256)"
+          DARWIN_ARM64_SHA="$(cut -d' ' -f1 dist/release/codex-worker-darwin-arm64.sha256)"
+          LINUX_X64_SHA="$(cut -d' ' -f1 dist/release/codex-worker-linux-x64.sha256)"
+          LINUX_ARM64_SHA="$(cut -d' ' -f1 dist/release/codex-worker-linux-arm64.sha256)"
+
+          node scripts/render-homebrew-formula.mjs \
+            --output dist/homebrew/Formula/codex-worker.rb \
+            --version "${{ needs.metadata.outputs.version }}" \
+            --repo "${{ github.repository }}" \
+            --darwin-x64-sha "${DARWIN_X64_SHA}" \
+            --darwin-arm64-sha "${DARWIN_ARM64_SHA}" \
+            --linux-x64-sha "${LINUX_X64_SHA}" \
+            --linux-arm64-sha "${LINUX_ARM64_SHA}"
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-release-bundle
+          path: |
+            dist/release
+            dist/homebrew/Formula/codex-worker.rb
+          if-no-files-found: error
+
+  publish-release:
+    if: ${{ inputs.publish_release }}
+    needs:
+      - metadata
+      - bundle
+      - smoke-linux
+      - smoke-macos
+      - smoke-windows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-release-bundle
+          path: dist
+
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.metadata.outputs.tag }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/release/* dist/homebrew/Formula/codex-worker.rb --clobber
+          else
+            gh release create "${TAG}" dist/release/* dist/homebrew/Formula/codex-worker.rb \
+              --title "${TAG}" \
+              --generate-notes \
+              --verify-tag
+          fi
+
+  sync-homebrew-formula:
+    if: ${{ inputs.publish_release && inputs.publish_branch != '' }}
+    needs:
+      - metadata
+      - bundle
+      - publish-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out publish branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.publish_branch }}
+          fetch-depth: 0
+
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-release-bundle
+          path: dist
+
+      - name: Update Homebrew formula in source repository
+        env:
+          VERSION: ${{ needs.metadata.outputs.version }}
+          PUBLISH_BRANCH: ${{ inputs.publish_branch }}
+        run: |
+          mkdir -p Formula
+          cp dist/homebrew/Formula/codex-worker.rb Formula/codex-worker.rb
+
+          if ! git status --short -- Formula/codex-worker.rb | grep -q .; then
+            echo "Homebrew formula already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/codex-worker.rb
+          git commit -m "chore: update Homebrew formula to v${VERSION}"
+          git push origin HEAD:${PUBLISH_BRANCH}
+
+  sync-homebrew-tap:
+    if: ${{ inputs.publish_release && vars.ENABLE_HOMEBREW_TAP_SYNC == 'true' && vars.HOMEBREW_TAP_REPO != '' }}
+    needs:
+      - metadata
+      - bundle
+      - publish-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-release-bundle
+          path: dist
+
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN secret is required when ENABLE_HOMEBREW_TAP_SYNC=true." >&2
+            exit 1
+          fi
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPO}.git" tap-repo
+          mkdir -p tap-repo/Formula
+          cp dist/homebrew/Formula/codex-worker.rb tap-repo/Formula/codex-worker.rb
+
+          cd tap-repo
+          if ! git status --short -- Formula/codex-worker.rb | grep -q .; then
+            echo "Homebrew formula already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/codex-worker.rb
+          git commit -m "chore: update codex-worker formula to v${VERSION}"
+          git push origin HEAD

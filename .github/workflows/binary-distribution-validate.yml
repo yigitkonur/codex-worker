@@ -1,0 +1,17 @@
+name: binary-distribution-validate
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    uses: ./.github/workflows/binary-distribution-common.yml
+    with:
+      ref: ${{ github.sha }}
+      publish_release: false
+    secrets: inherit

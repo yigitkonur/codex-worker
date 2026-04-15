@@ -6,8 +6,9 @@ It wraps the app-server protocol in a stable shell surface with local state, res
 
 ## Requirements
 
-- Node.js 22+
 - `codex` CLI installed and authenticated
+- Node.js 22+ for npm installs and source development
+- No Node.js or Bun runtime required when using a GitHub Release binary
 
 ## Install
 
@@ -23,6 +24,22 @@ One-off execution:
 npx codex-worker doctor
 ```
 
+Standalone binary from GitHub Releases, once binary publishing is enabled:
+
+```bash
+curl -LO https://github.com/yigitkonur/codex-worker/releases/latest/download/codex-worker-linux-x64
+chmod +x codex-worker-linux-x64
+mv codex-worker-linux-x64 /usr/local/bin/codex-worker
+codex-worker doctor
+```
+
+Homebrew from this repository, once binary publishing is enabled:
+
+```bash
+brew tap yigitkonur/codex-worker https://github.com/yigitkonur/codex-worker
+brew install yigitkonur/codex-worker/codex-worker
+```
+
 From source:
 
 ```bash
@@ -30,6 +47,8 @@ npm install
 npm run build
 node dist/src/cli.js --help
 ```
+
+The repository now includes a staged Bun-binary distribution pipeline. The existing npm release workflow stays live, every push validates the binary distribution path, and maintainers can enable binary publishing separately after remote validation. Full rollout details live in [`docs/distribution/binary-releases.md`](./docs/distribution/binary-releases.md).
 
 ## CLI Surface
 
@@ -96,6 +115,7 @@ When fleet mode is enabled, `codex-worker` appends a `[codex-worker:fleet]` suff
 npm run build
 npm test
 npm run smoke
+npm run bun:compile
 node --import tsx src/cli.ts --help
 ```
 
