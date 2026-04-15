@@ -41,3 +41,10 @@ test('published bin targets compiled output without tsx at runtime', async () =>
   assert.match(binSource, /dist\/src\/cli\.js/);
   assert.doesNotMatch(binSource, /tsx\/esm\/api/);
 });
+
+test('package exposes Bun compile helpers for binary distribution', () => {
+  assert.equal(pkg.devDependencies.bun, '1.3.11');
+  assert.equal(pkg.scripts['bun:compile'], 'node scripts/build-binary.mjs');
+  assert.equal(pkg.scripts['bun:compile:target'], 'node scripts/build-binary.mjs --target');
+  assert.equal(pkg.scripts['bun:compile:all'], 'node scripts/build-binary.mjs --all');
+});

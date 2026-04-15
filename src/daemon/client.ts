@@ -2,29 +2,13 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 
 import { buildDaemonToken, ensureStateRoot } from '../core/paths.js';
+import { selfRespawnSpec } from '../core/runtime-env.js';
 import type { DaemonMeta, DaemonRequestEnvelope, DaemonResponseEnvelope } from '../core/types.js';
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function cliLaunchSpec(): { command: string; args: string[] } {
-  const compiledCliPath = fileURLToPath(new URL('../cli.js', import.meta.url));
-  if (existsSync(compiledCliPath)) {
-    return {
-      command: process.execPath,
-      args: [compiledCliPath, 'daemon-run'],
-    };
-  }
-
-  const sourceCliPath = fileURLToPath(new URL('../cli.ts', import.meta.url));
-  return {
-    command: process.execPath,
-    args: ['--import', 'tsx', sourceCliPath, 'daemon-run'],
-  };
 }
 
 async function readDaemonMeta(): Promise<DaemonMeta | null> {
@@ -59,7 +43,7 @@ export async function ensureDaemonMeta(): Promise<DaemonMeta> {
 
   const { socketPath } = ensureStateRoot();
   const token = buildDaemonToken();
-  const launchSpec = cliLaunchSpec();
+  const launchSpec = selfRespawnSpec('daemon-run');
   const child = spawn(launchSpec.command, launchSpec.args, {
     detached: true,
     stdio: 'ignore',
@@ -98,8 +82,25 @@ export async function sendDaemonRequest(
   };
 
   return await new Promise<Record<string, unknown>>((resolve, reject) => {
+    let settled = false;
     let buffer = '';
     const socket = net.createConnection(meta.socketPath);
+
+    const settle = (error?: Error, data?: Record<string, unknown>): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.setTimeout(0);
+      if (!socket.destroyed) {
+        socket.end();
+      }
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(data ?? {});
+    };
 
     socket.on('connect', () => {
       socket.write(`${JSON.stringify(request)}\n`);
@@ -112,22 +113,49 @@ export async function sendDaemonRequest(
         const line = buffer.slice(0, newlineIndex).trim();
         buffer = buffer.slice(newlineIndex + 1);
         if (line) {
-          const envelope = JSON.parse(line) as DaemonResponseEnvelope;
+          let envelope: DaemonResponseEnvelope;
+          try {
+            envelope = JSON.parse(line) as DaemonResponseEnvelope;
+          } catch {
+            settle(new Error('Received malformed daemon response payload'));
+            return;
+          }
           if (envelope.type === 'event') {
             options?.onEvent?.(envelope.event ?? 'event', envelope.data ?? {});
           } else if (envelope.type === 'result') {
-            socket.end();
-            resolve(envelope.data ?? {});
+            settle(undefined, envelope.data ?? {});
+            return;
           } else {
-            socket.end();
-            reject(new Error(envelope.error ?? 'Unknown daemon error'));
+            settle(new Error(envelope.error ?? 'Unknown daemon error'));
+            return;
           }
         }
         newlineIndex = buffer.indexOf('\n');
       }
     });
 
-    socket.on('error', reject);
+    socket.on('error', (error) => {
+      settle(error);
+    });
+
+    socket.on('end', () => {
+      if (!settled) {
+        settle(new Error('Daemon socket ended before response envelope was received'));
+      }
+    });
+
+    socket.on('close', (hadError) => {
+      if (!settled) {
+        const message = hadError
+          ? 'Daemon socket closed due to a connection error before response envelope was received'
+          : 'Daemon socket closed before response envelope was received';
+        settle(new Error(message));
+      }
+    });
+
+    socket.setTimeout(30_000, () => {
+      settle(new Error('Timed out waiting for daemon response envelope'));
+    });
   });
 }
 

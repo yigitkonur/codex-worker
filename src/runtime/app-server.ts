@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 
-import { readPackageMetadata } from '../core/package-meta.js';
+import { pkgMeta } from '../core/package-meta.js';
 
 export type RpcId = string | number;
 
@@ -27,8 +27,6 @@ interface PendingRequest {
   reject: (error: Error) => void;
   timeout: NodeJS.Timeout;
 }
-
-const pkg = readPackageMetadata(import.meta.url);
 
 function asObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -66,7 +64,7 @@ export class AppServerClient extends EventEmitter {
     }
 
     const child = spawn('codex', ['app-server', '--listen', 'stdio://'], {
-      cwd: process.cwd(),
+      cwd: this.cwd,
       env: {
         ...process.env,
         CODEX_HOME: this.codexHome,
@@ -83,6 +81,12 @@ export class AppServerClient extends EventEmitter {
     child.stderr.on('data', (chunk: string) => {
       this.emit('stderr', chunk);
     });
+    child.on('error', (error) => {
+      this.started = false;
+      this.child = undefined;
+      const reason = `failed to start codex app-server: ${error.message}`;
+      this.rejectPending(reason);
+    });
     child.on('exit', (code, signal) => {
       this.started = false;
       this.child = undefined;
@@ -95,7 +99,7 @@ export class AppServerClient extends EventEmitter {
       clientInfo: {
         name: this.clientName,
         title: this.clientName,
-        version: pkg.version,
+        version: pkgMeta.version,
       },
       capabilities: {
         experimentalApi: false,

@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import packageJson from '../../package.json' with { type: 'json' };
+
 export interface PackageMetadata {
   name: string;
   version: string;
@@ -15,6 +17,15 @@ function isUsablePackageMetadata(value: unknown): value is PackageMetadata {
     && typeof (value as { version?: unknown }).version === 'string',
   );
 }
+
+if (!isUsablePackageMetadata(packageJson)) {
+  throw new Error('Static package metadata import is missing name/version');
+}
+
+export const pkgMeta: PackageMetadata = {
+  name: packageJson.name,
+  version: packageJson.version,
+};
 
 export function readPackageMetadata(moduleUrl: string): PackageMetadata {
   const moduleDir = dirname(fileURLToPath(moduleUrl));

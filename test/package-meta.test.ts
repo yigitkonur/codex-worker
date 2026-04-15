@@ -5,7 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { readPackageMetadata } from '../src/core/package-meta.js';
+import packageJson from '../package.json' with { type: 'json' };
+
+import { pkgMeta, readPackageMetadata } from '../src/core/package-meta.js';
 
 test('package metadata resolver prefers the project root package.json over dist/package.json', async () => {
   const root = await mkdtemp(join(tmpdir(), 'codex-worker-package-meta-'));
@@ -32,4 +34,11 @@ test('package metadata resolver prefers the project root package.json over dist/
   assert.deepEqual(distMeta, { name: 'codex-worker', version: '9.9.9' });
   assert.deepEqual(sourceRuntimeMeta, { name: 'codex-worker', version: '9.9.9' });
   assert.deepEqual(distRuntimeMeta, { name: 'codex-worker', version: '9.9.9' });
+});
+
+test('pkgMeta exports package name and version from static package.json import', () => {
+  assert.deepEqual(pkgMeta, {
+    name: packageJson.name,
+    version: packageJson.version,
+  });
 });

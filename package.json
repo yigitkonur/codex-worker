@@ -10,12 +10,16 @@
   },
   "files": [
     "bin",
+    "dist/package.json",
     "dist/src",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-binary.mjs prepare-dist-package",
+    "bun:compile": "node scripts/build-binary.mjs",
+    "bun:compile:target": "node scripts/build-binary.mjs --target",
+    "bun:compile:all": "node scripts/build-binary.mjs --all",
     "prepack": "npm run build",
     "dev": "tsx src/cli.ts",
     "start": "tsx src/cli.ts",
@@ -52,6 +56,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.5",
+    "bun": "1.3.11",
     "tsx": "^4.20.3",
     "typescript": "^5.7.2"
   }
