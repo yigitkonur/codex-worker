@@ -32,7 +32,15 @@ import {
 } from '../runtime/app-server.js';
 
 const DEFAULT_MODEL = 'gpt-5.4';
-const DEFAULT_TIMEOUT_MS = 300_000;
+const FALLBACK_TURN_IDLE_TIMEOUT_MS = 30 * 60_000;
+
+function resolveTurnIdleTimeoutMs(): number {
+  const raw = process.env.CODEX_WORKER_TURN_TIMEOUT_MS;
+  if (raw === undefined) return FALLBACK_TURN_IDLE_TIMEOUT_MS;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return FALLBACK_TURN_IDLE_TIMEOUT_MS;
+  return n;
+}
 
 type AppServerLike = {
   start(): Promise<void>;
@@ -413,7 +421,7 @@ export class CliCodexWorkerService {
       alias: 'run',
       prompt: content,
       inputFilePath,
-      timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : DEFAULT_TIMEOUT_MS,
+      timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : resolveTurnIdleTimeoutMs(),
       writer,
       startTurn: async () => await started.client.request('turn/start', {
         threadId: started.thread.id,
@@ -460,7 +468,7 @@ export class CliCodexWorkerService {
       alias: 'send',
       prompt: content,
       inputFilePath,
-      timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : DEFAULT_TIMEOUT_MS,
+      timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : resolveTurnIdleTimeoutMs(),
       writer,
       startTurn: async () => await started.client.request('turn/start', {
         threadId: thread.id,
@@ -509,7 +517,7 @@ export class CliCodexWorkerService {
       alias: 'send',
       prompt,
       inputFilePath: stringValue(args.inputFilePath) ?? 'prompt.md',
-      timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : DEFAULT_TIMEOUT_MS,
+      timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : resolveTurnIdleTimeoutMs(),
       writer,
       startTurn: async () => await started.client.request('turn/steer', {
         threadId: thread.id,
@@ -628,7 +636,7 @@ export class CliCodexWorkerService {
   }
 
   async wait(args: Record<string, unknown>, _writer?: EventWriter): Promise<Record<string, unknown>> {
-    const timeoutMs = typeof args.timeoutMs === 'number' ? args.timeoutMs : DEFAULT_TIMEOUT_MS;
+    const timeoutMs = typeof args.timeoutMs === 'number' ? args.timeoutMs : resolveTurnIdleTimeoutMs();
     const started = Date.now();
 
     while (Date.now() - started <= timeoutMs) {
@@ -842,7 +850,35 @@ export class CliCodexWorkerService {
       const cwd = input.thread.cwd;
       const threadId = input.thread.id;
 
+      let lastActivityAt = Date.now();
+      let idleTimer: NodeJS.Timeout | undefined;
+      const scheduleIdleTimer = (ms: number) => {
+        const t = setTimeout(fireIfIdle, ms);
+        t.unref();
+        idleTimer = t;
+      };
+      const fireIfIdle = () => {
+        if (currentExecution.settled) return;
+        const idleMs = Date.now() - lastActivityAt;
+        if (idleMs + 50 < input.timeoutMs) {
+          scheduleIdleTimer(input.timeoutMs - idleMs);
+          return;
+        }
+        void appendRawEvent(cwd, threadId, {
+          dir: 'daemon',
+          message: `watchdog_fire turnId=${turnId} idle_ms=${idleMs} limit_ms=${input.timeoutMs}`,
+        });
+        void this.failExecution(
+          currentExecution,
+          new Error(`Idle turn timeout: no events for ${Math.round(idleMs / 1000)}s (limit ${Math.round(input.timeoutMs / 1000)}s). Set CODEX_WORKER_TURN_TIMEOUT_MS to raise.`),
+        );
+      };
+      const bumpActivity = () => {
+        lastActivityAt = Date.now();
+      };
+
       const onNotification = (notification: RpcNotificationMessage) => {
+        bumpActivity();
         void appendRawEvent(cwd, threadId, {
           dir: 'notification',
           method: notification.method,
@@ -851,6 +887,7 @@ export class CliCodexWorkerService {
         void this.handleNotification(currentExecution, notification);
       };
       const onServerRequest = (request: RpcServerRequestMessage) => {
+        bumpActivity();
         void appendRawEvent(cwd, threadId, {
           dir: 'server_request',
           id: request.id,
@@ -895,6 +932,7 @@ export class CliCodexWorkerService {
         input.client.off?.('rpcIn', onRpcIn);
         input.client.off?.('stderr', onStderr);
         input.client.off?.('protocolError', onProtocolError);
+        if (idleTimer) clearTimeout(idleTimer);
       };
 
       input.client.on('notification', onNotification);
@@ -910,11 +948,7 @@ export class CliCodexWorkerService {
         message: `launchTurn source=${input.source} turnId=${turnId} jobId=${job.id}`,
       });
 
-      setTimeout(() => {
-        if (!currentExecution.settled) {
-          void this.failExecution(currentExecution, new Error(`Timed out after ${input.timeoutMs}ms.`));
-        }
-      }, input.timeoutMs).unref();
+      scheduleIdleTimer(input.timeoutMs);
     });
 
     try {
@@ -937,6 +971,9 @@ export class CliCodexWorkerService {
       );
     }
 
+    // Ensure rejections are never unhandled. Async callers read terminal state
+    // from the store; sync callers can still await the returned promise.
+    visible.catch(() => {});
     return { turn: turnRecord, job, visible };
   }
 
