@@ -36,8 +36,8 @@ Current workflow layout:
 
 1. [`.github/workflows/release.yml`](../../.github/workflows/release.yml) remains the live npm publisher on `main`.
 2. [`.github/workflows/binary-distribution-validate.yml`](../../.github/workflows/binary-distribution-validate.yml) runs on every push, pull request, and manual dispatch.
-3. [`.github/workflows/release-binaries.yml`](../../.github/workflows/release-binaries.yml) follows the live release workflow via `workflow_run`, but it is gated by the repository variable `ENABLE_BINARY_RELEASE=true`.
-4. [`.github/workflows/binary-distribution-common.yml`](../../.github/workflows/binary-distribution-common.yml) is the shared implementation used by both validation and publishing paths.
+3. [`.github/workflows/binary-distribution-common.yml`](../../.github/workflows/binary-distribution-common.yml) is the shared read-only build workflow used by both validation and release publishing.
+4. [`.github/workflows/release-binaries.yml`](../../.github/workflows/release-binaries.yml) follows the live release workflow via `workflow_run`, stays gated by `ENABLE_BINARY_RELEASE=true`, and owns the write-capable publish steps directly.
 
 When binary publishing is enabled, the publish workflow does two same-repository write operations with the built-in `GITHUB_TOKEN`:
 

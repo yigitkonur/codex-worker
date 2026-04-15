@@ -17,6 +17,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       ref: ${{ steps.resolve.outputs.ref }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      publish_branch: ${{ steps.resolve.outputs.publish_branch }}
 
     steps:
       - name: Download release metadata from triggering run
@@ -25,8 +28,10 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: gh run download "${RUN_ID}" --name release-metadata --dir .release-metadata
 
-      - name: Resolve release tag ref
+      - name: Resolve release context
         id: resolve
+        env:
+          PUBLISH_BRANCH: ${{ github.event.workflow_run.head_branch }}
         run: |
           . .release-metadata/release.env
           if [ -z "${version:-}" ]; then
@@ -34,14 +39,124 @@ jobs:
             exit 1
           fi
           echo "ref=refs/tags/v${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${version}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "publish_branch=${PUBLISH_BRANCH}" >> "$GITHUB_OUTPUT"
 
-  publish-binaries:
+  prepare-binaries:
     needs: resolve-release
-    permissions:
-      contents: write
     uses: ./.github/workflows/binary-distribution-common.yml
     with:
       ref: ${{ needs.resolve-release.outputs.ref }}
-      publish_branch: ${{ github.event.workflow_run.head_branch }}
-      publish_release: true
-    secrets: inherit
+
+  publish-release:
+    needs:
+      - resolve-release
+      - prepare-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-release-bundle
+          path: dist
+
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve-release.outputs.tag }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/release/* dist/homebrew/Formula/codex-worker.rb --clobber
+          else
+            gh release create "${TAG}" dist/release/* dist/homebrew/Formula/codex-worker.rb \
+              --title "${TAG}" \
+              --generate-notes \
+              --verify-tag
+          fi
+
+  sync-homebrew-formula:
+    needs:
+      - resolve-release
+      - prepare-binaries
+      - publish-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out publish branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.publish_branch }}
+          fetch-depth: 0
+
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-release-bundle
+          path: dist
+
+      - name: Update Homebrew formula in source repository
+        env:
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+          PUBLISH_BRANCH: ${{ needs.resolve-release.outputs.publish_branch }}
+        run: |
+          mkdir -p Formula
+          cp dist/homebrew/Formula/codex-worker.rb Formula/codex-worker.rb
+
+          if ! git status --short -- Formula/codex-worker.rb | grep -q .; then
+            echo "Homebrew formula already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/codex-worker.rb
+          git commit -m "chore: update Homebrew formula to v${VERSION}"
+          git push origin HEAD:${PUBLISH_BRANCH}
+
+  sync-homebrew-tap:
+    if: ${{ vars.ENABLE_HOMEBREW_TAP_SYNC == 'true' && vars.HOMEBREW_TAP_REPO != '' }}
+    needs:
+      - resolve-release
+      - prepare-binaries
+      - publish-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-release-bundle
+          path: dist
+
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ needs.resolve-release.outputs.version }}
+        run: |
+          if [ -z "${HOMEBREW_TAP_TOKEN:-}" ]; then
+            echo "HOMEBREW_TAP_TOKEN secret is required when ENABLE_HOMEBREW_TAP_SYNC=true." >&2
+            exit 1
+          fi
+
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/${HOMEBREW_TAP_REPO}.git" tap-repo
+          mkdir -p tap-repo/Formula
+          cp dist/homebrew/Formula/codex-worker.rb tap-repo/Formula/codex-worker.rb
+
+          cd tap-repo
+          if ! git status --short -- Formula/codex-worker.rb | grep -q .; then
+            echo "Homebrew formula already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/codex-worker.rb
+          git commit -m "chore: update codex-worker formula to v${VERSION}"
+          git push origin HEAD
