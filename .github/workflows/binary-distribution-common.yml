@@ -30,7 +30,7 @@ jobs:
       - name: Resolve release metadata
         id: meta
         run: |
-          VERSION="$(node -p 'require(\"./package.json\").version')"
+          VERSION="$(node -p "require('./package.json').version")"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
