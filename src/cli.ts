@@ -6,7 +6,7 @@ import process from 'node:process';
 import { Command } from 'commander';
 
 import { readMarkdownFile } from './core/markdown.js';
-import { readPackageMetadata } from './core/package-meta.js';
+import { pkgMeta } from './core/package-meta.js';
 import { daemonIsRunning, ensureDaemonMeta, sendDaemonRequest } from './daemon/client.js';
 import { runDaemonServer } from './daemon/server.js';
 import { inspectDoctor } from './doctor.js';
@@ -262,13 +262,12 @@ async function commandSend(threadId: string, messageFile: string, options: { asy
   process.stdout.write(`${renderTurnResult(result)}\n`);
 }
 
-const pkg = readPackageMetadata(import.meta.url);
 const program = new Command();
 
 program
   .name('codex-worker')
   .description('Daemon-backed Codex app-server worker CLI')
-  .version(pkg.version)
+  .version(pkgMeta.version)
   .option('--output <format>', 'Output format: text or json');
 
 program
