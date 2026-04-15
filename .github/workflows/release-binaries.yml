@@ -25,6 +25,7 @@ jobs:
       - name: Download release metadata from triggering run
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: gh run download "${RUN_ID}" --name release-metadata --dir .release-metadata
 
@@ -67,6 +68,7 @@ jobs:
       - name: Publish GitHub release assets
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.resolve-release.outputs.tag }}
         run: |
           if gh release view "${TAG}" >/dev/null 2>&1; then
