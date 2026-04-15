@@ -59,7 +59,7 @@ jobs:
 
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binary-release-bundle
           path: dist
@@ -89,13 +89,13 @@ jobs:
 
     steps:
       - name: Check out publish branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ needs.resolve-release.outputs.publish_branch }}
           fetch-depth: 0
 
       - name: Download release bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binary-release-bundle
           path: dist
@@ -129,7 +129,7 @@ jobs:
 
     steps:
       - name: Download release bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: binary-release-bundle
           path: dist

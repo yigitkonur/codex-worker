@@ -22,7 +22,7 @@ jobs:
 
     steps:
       - name: Check out target ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
           fetch-depth: 0
@@ -52,12 +52,12 @@ jobs:
 
     steps:
       - name: Check out target ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -79,7 +79,7 @@ jobs:
           sha256sum "${{ matrix.output_name }}" > "${{ matrix.output_name }}.sha256"
 
       - name: Upload ${{ matrix.output_name }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.output_name }}
           path: |
@@ -93,7 +93,7 @@ jobs:
 
     steps:
       - name: Download linux-x64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: codex-worker-linux-x64
           path: dist/bin
@@ -109,7 +109,7 @@ jobs:
 
     steps:
       - name: Download darwin-arm64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: codex-worker-darwin-arm64
           path: dist/bin
@@ -125,7 +125,7 @@ jobs:
 
     steps:
       - name: Download windows-x64 artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: codex-worker-windows-x64.exe
           path: dist/bin
@@ -142,12 +142,12 @@ jobs:
 
     steps:
       - name: Check out target ref
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
 
       - name: Download compiled artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: codex-worker-*
           merge-multiple: true
@@ -170,7 +170,7 @@ jobs:
             --linux-arm64-sha "${LINUX_ARM64_SHA}"
 
       - name: Upload release bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: binary-release-bundle
           path: |
