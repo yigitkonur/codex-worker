@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 
-cw_should_run_main() {
-  [[ "${#BASH_SOURCE[@]}" -eq 0 || "${BASH_SOURCE[0]}" == "$0" ]]
-}
+if (return 0 2>/dev/null); then
+  CODEX_WORKER_INSTALL_SOURCED=1
+else
+  CODEX_WORKER_INSTALL_SOURCED=0
+fi
 
-if cw_should_run_main; then
+if [[ "${CODEX_WORKER_INSTALL_SOURCED}" -eq 0 ]]; then
   set -euo pipefail
 fi
 
@@ -531,6 +533,6 @@ EOF
   fi
 }
 
-if cw_should_run_main; then
+if [[ "${CODEX_WORKER_INSTALL_SOURCED}" -eq 0 ]]; then
   cw_main "$@"
 fi
