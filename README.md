@@ -12,115 +12,63 @@ It wraps the app-server protocol in a stable shell surface with local state, res
 
 ## Install
 
-Recommended standalone install from GitHub Releases:
+One-line install (recommended):
 
 ```bash
 sudo -v ; curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | sudo bash
 codex-worker doctor
 ```
 
-The installer selects the correct released binary for the current host, downloads the matching `.sha256` file, verifies the checksum, installs `codex-worker` into your chosen bin directory, and skips re-installing when the same version is already present.
+The installer auto-detects OS/arch/libc, downloads the matching release binary plus its `.sha256`, verifies the checksum, and writes `codex-worker` to `/usr/local/bin` as root or `~/.local/bin` otherwise.
 
-Global install:
+**Override behavior:** if another `codex-worker` is earlier on `PATH` (e.g. a Homebrew symlink at `/opt/homebrew/bin/codex-worker`), the installer removes it so `which codex-worker` resolves to the freshly installed copy. Pass `--no-override` to disable. Only shadowing copies (earlier on `PATH`) are touched; copies later on `PATH` are left alone.
 
-```bash
-npm install -g codex-worker
-```
+### Other install methods
 
-One-off execution:
+| Method | Command |
+| --- | --- |
+| User-local (no sudo) | `curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh \| bash -s -- --install-dir "$HOME/.local/bin"` |
+| Pinned version | `... \| bash -s -- --version 0.1.17` |
+| Dry-run (preview) | `... \| bash -s -- --dry-run` |
+| npm global | `npm install -g codex-worker` |
+| One-off via npx | `npx codex-worker doctor` |
+| Homebrew tap | `brew tap yigitkonur/codex-worker https://github.com/yigitkonur/codex-worker && brew install yigitkonur/codex-worker/codex-worker` |
+| From source | `npm install && npm run build && node dist/src/cli.js --help` |
 
-```bash
-npx codex-worker doctor
-```
-
-User-local install without `sudo`:
-
-```bash
-curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | bash -s -- --install-dir "$HOME/.local/bin"
-```
-
-Pinned release install:
-
-```bash
-curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | bash -s -- --version 0.1.17 --install-dir "$HOME/.local/bin"
-```
-
-Inspect what the installer would do without downloading:
-
-```bash
-curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | bash -s -- --dry-run
-```
-
-Manual binary install remains available:
+Manual download (if you want to skip the installer entirely):
 
 ```bash
 curl -LO https://github.com/yigitkonur/codex-worker/releases/latest/download/codex-worker-linux-x64
 curl -LO https://github.com/yigitkonur/codex-worker/releases/latest/download/codex-worker-linux-x64.sha256
 sha256sum -c codex-worker-linux-x64.sha256
 chmod +x codex-worker-linux-x64
-mv codex-worker-linux-x64 /usr/local/bin/codex-worker
+sudo mv codex-worker-linux-x64 /usr/local/bin/codex-worker
 ```
 
-Homebrew from this repository:
+Full binary distribution details live in [`docs/distribution/binary-releases.md`](./docs/distribution/binary-releases.md).
 
-```bash
-brew tap yigitkonur/codex-worker https://github.com/yigitkonur/codex-worker
-brew install yigitkonur/codex-worker/codex-worker
-```
+### Installer flags
 
-From source:
+| Flag | Purpose |
+| --- | --- |
+| `--version <ver>` | Install a specific release tag or version number |
+| `--install-dir <dir>` | Override the install directory |
+| `--target <asset>` | Bypass platform auto-detection and pick a specific release asset |
+| `--repo <owner/repo>` | Install from a fork with the same asset layout |
+| `--force` | Reinstall even if the same version is already present |
+| `--no-verify` | Skip sha256 verification |
+| `--no-override` | Leave other `codex-worker` copies on `PATH` alone |
+| `--dry-run` | Print the resolved install plan without downloading |
 
-```bash
-npm install
-npm run build
-node dist/src/cli.js --help
-```
+Environment overrides: `CODEX_WORKER_INSTALL_DIR`, `CODEX_WORKER_INSTALL_OS`, `CODEX_WORKER_INSTALL_ARCH`, `CODEX_WORKER_INSTALL_LIBC`, `CODEX_WORKER_INSTALL_CPU_FEATURES`, `GITHUB_TOKEN`.
 
-The repository now includes a live Bun-binary distribution pipeline. Every push validates the binary distribution path, GitHub Releases publish the standalone binaries, and the installer script is shipped as a release asset. Full rollout details live in [`docs/distribution/binary-releases.md`](./docs/distribution/binary-releases.md).
+### Platform notes
 
-## Installer Details
-
-The published installer is the same file exposed at:
-
-```bash
-https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh
-```
-
-What it does:
-
-- Detects `Darwin` vs `Linux`
-- Detects `arm64` vs `x64`
-- Detects `glibc` vs `musl` on Linux
-- Uses `codex-worker-linux-x64-baseline` on older Linux x86_64 CPUs that do not report `avx2`
-- Downloads the matching binary plus matching `.sha256`
-- Verifies the checksum before install unless `--no-verify` is passed
-- Installs to `/usr/local/bin` by default as root, otherwise falls back to `~/.local/bin` when `/usr/local/bin` is not writable
-- Skips reinstalling when the requested version is already installed unless `--force` is passed
-
-Supported installer flags:
-
-- `--version <version>` installs a specific release version or tag
-- `--install-dir <dir>` installs into a custom directory
-- `--target <asset-name>` bypasses platform auto-detection and installs a specific release asset
-- `--repo <owner/repo>` installs from another GitHub repository with the same asset layout
-- `--force` reinstalls even if the same version is already present
-- `--no-verify` skips checksum verification
-- `--dry-run` prints the resolved install plan without downloading
-
-Examples:
-
-```bash
-curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | bash -s -- --version v0.1.17
-curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | bash -s -- --target codex-worker-linux-x64
-curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | bash -s -- --force
-```
-
-Platform caveats:
-
-- `codex-worker` still requires the upstream `codex` CLI to be installed and authenticated
-- The current installer targets Unix-like shells; Windows users should download the `.exe` release asset directly
-- There is no published `linux-x64-baseline-musl` asset, so very old Alpine x86_64 systems without `avx2` are not auto-supported by the installer
-- If you prefer package managers to own updates, use Homebrew instead of the shell installer
+- `codex-worker` still requires the upstream `codex` CLI to be installed and authenticated.
+- Older Linux x86_64 CPUs without `avx2` are auto-served the `codex-worker-linux-x64-baseline` build.
+- Alpine / musl x86_64 without `avx2` has no published asset; build from source on those hosts.
+- Windows: download the `.exe` release asset directly — the shell installer targets Unix-like shells.
+- Pick Homebrew if you want package-manager-owned updates; pick the shell installer if you want the newest release immediately.
 
 ## CLI Surface
 

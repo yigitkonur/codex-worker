@@ -289,6 +289,73 @@ cw_verify_sha256_file() {
   fi
 }
 
+cw_which_on_path() {
+  local bin="${1:?bin required}"
+  local search_path="${2:-${PATH}}"
+  local IFS=:
+  local dir candidate
+  for dir in ${search_path}; do
+    [[ -z "${dir}" ]] && continue
+    candidate="${dir%/}/${bin}"
+    if [[ -x "${candidate}" || -f "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+cw_list_all_on_path() {
+  local bin="${1:?bin required}"
+  local search_path="${2:-${PATH}}"
+  local IFS=:
+  local dir candidate
+  local -A seen=()
+  for dir in ${search_path}; do
+    [[ -z "${dir}" ]] && continue
+    candidate="${dir%/}/${bin}"
+    if [[ -n "${seen[${candidate}]:-}" ]]; then
+      continue
+    fi
+    seen[${candidate}]=1
+    if [[ -e "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+    fi
+  done
+}
+
+cw_remove_shadowing_copies() {
+  local install_path="${1:?install path required}"
+  local bin_name="${2:-${CODEX_WORKER_DEFAULT_BIN_NAME}}"
+  local -a removed=()
+  local -a failed=()
+  local iteration=0
+  local max_iterations=16
+  local resolved
+
+  while (( iteration < max_iterations )); do
+    resolved="$(cw_which_on_path "${bin_name}" "${PATH}" || true)"
+    if [[ -z "${resolved}" || "${resolved}" == "${install_path}" ]]; then
+      break
+    fi
+    if rm -f "${resolved}" 2>/dev/null; then
+      removed+=("${resolved}")
+    else
+      failed+=("${resolved}")
+      break
+    fi
+    iteration=$(( iteration + 1 ))
+  done
+
+  local copy
+  for copy in "${removed[@]+"${removed[@]}"}"; do
+    cw_log "Removed shadowing copy at ${copy}"
+  done
+  for copy in "${failed[@]+"${failed[@]}"}"; do
+    cw_warn "Cannot remove shadowing copy at ${copy}; remove it manually so ${install_path} wins on PATH"
+  done
+}
+
 cw_resolve_install_dir() {
   if [[ -n "${CODEX_WORKER_INSTALL_DIR:-}" ]]; then
     printf '%s\n' "${CODEX_WORKER_INSTALL_DIR}"
@@ -380,6 +447,7 @@ Options:
   --repo <owner/repo>       GitHub repository to install from
   --force                   Reinstall even if the same version is already installed
   --no-verify               Skip sha256 verification
+  --no-override             Leave other codex-worker copies on PATH alone (do not remove shadowing copies)
   --dry-run                 Print the resolved install plan without downloading
   --help                    Show this help text
 
@@ -400,6 +468,7 @@ cw_main() {
   local install_dir=""
   local verify_checksums="true"
   local force_install="false"
+  local override_shadowing="true"
   local dry_run="false"
 
   while [[ $# -gt 0 ]]; do
@@ -426,6 +495,10 @@ cw_main() {
         ;;
       --no-verify)
         verify_checksums="false"
+        shift
+        ;;
+      --no-override)
+        override_shadowing="false"
         shift
         ;;
       --dry-run)
@@ -474,6 +547,17 @@ cw_main() {
   checksum_name="${asset_name}.sha256"
 
   if [[ "${dry_run}" == "true" ]]; then
+    local shadowing_preview=""
+    if [[ "${override_shadowing}" == "true" ]]; then
+      local copy
+      while IFS= read -r copy; do
+        [[ -z "${copy}" ]] && continue
+        if [[ "${copy}" != "${install_path}" ]]; then
+          shadowing_preview+="${copy} "
+        fi
+      done < <(cw_list_all_on_path "${CODEX_WORKER_DEFAULT_BIN_NAME}" "${PATH}")
+      shadowing_preview="${shadowing_preview% }"
+    fi
     cat <<EOF
 repo=${repo}
 version=${resolved_version}
@@ -485,6 +569,8 @@ asset=${asset_name}
 checksum=${checksum_name}
 install_dir=${install_dir}
 install_path=${install_path}
+override=${override_shadowing}
+shadowing_on_path=${shadowing_preview}
 EOF
     return 0
   fi
@@ -495,6 +581,9 @@ EOF
   installed_version="$(cw_installed_version "${install_path}" || true)"
   if [[ "${force_install}" != "true" && -n "${installed_version}" && "${installed_version}" == "$(cw_version_without_prefix "${resolved_version}")" ]]; then
     cw_log "codex-worker ${installed_version} is already installed at ${install_path}"
+    if [[ "${override_shadowing}" == "true" ]]; then
+      cw_remove_shadowing_copies "${install_path}" "${CODEX_WORKER_DEFAULT_BIN_NAME}"
+    fi
     return 0
   fi
 
@@ -523,6 +612,10 @@ EOF
   fi
 
   cw_log "Installed ${CODEX_WORKER_DEFAULT_BIN_NAME} ${resolved_version#v} to ${install_path}"
+
+  if [[ "${override_shadowing}" == "true" ]]; then
+    cw_remove_shadowing_copies "${install_path}" "${CODEX_WORKER_DEFAULT_BIN_NAME}"
+  fi
 
   if ! command -v codex >/dev/null 2>&1; then
     cw_warn 'codex CLI is not installed or not on PATH; codex-worker requires codex to be installed and authenticated'
