@@ -3,6 +3,7 @@ import process from 'node:process';
 import { readFile, writeFile } from 'node:fs/promises';
 
 import { readCodexConfig, type CodexConfigDefaults } from '../core/codex-config.js';
+import { appendRawEvent } from '../core/raw-log.js';
 import { classifyWorkerFailure } from '../core/failure-classifier.js';
 import { appendFleetDeveloperInstructions } from '../core/fleet-mode.js';
 import {
@@ -12,7 +13,7 @@ import {
   type ModelCatalog,
   type ModelCatalogInput,
 } from '../core/model-catalog.js';
-import { ensureStateRoot, logPath, transcriptPath } from '../core/paths.js';
+import { ensureStateRoot, logPath, rawLogPath, transcriptPath } from '../core/paths.js';
 import { ProfileFaultPlanner } from '../core/profile-faults.js';
 import { ProfileManager } from '../core/profile-manager.js';
 import { PersistentStore } from '../core/store.js';
@@ -361,6 +362,7 @@ export class CliCodexWorkerService {
       : 20;
     const transcriptFilePath = transcriptPath(localThread.cwd, localThread.id);
     const logFilePath = logPath(localThread.cwd, localThread.id);
+    const rawLogFilePath = rawLogPath(localThread.cwd, localThread.id);
 
     const recentEvents = await readTailJson(transcriptFilePath, tailLines);
     const rawLogTail = await readTailLines(logFilePath, tailLines);
@@ -373,6 +375,7 @@ export class CliCodexWorkerService {
       artifacts: {
         transcriptPath: transcriptFilePath,
         logPath: logFilePath,
+        rawLogPath: rawLogFilePath,
         recentEvents,
         logTail: rawLogTail,
         displayLog: buildDisplayLog(recentEvents, rawLogTail),
@@ -836,25 +839,76 @@ export class CliCodexWorkerService {
       execution = currentExecution;
       this.activeExecutions.set(input.thread.id, currentExecution);
 
+      const cwd = input.thread.cwd;
+      const threadId = input.thread.id;
+
       const onNotification = (notification: RpcNotificationMessage) => {
+        void appendRawEvent(cwd, threadId, {
+          dir: 'notification',
+          method: notification.method,
+          params: notification.params,
+        });
         void this.handleNotification(currentExecution, notification);
       };
       const onServerRequest = (request: RpcServerRequestMessage) => {
+        void appendRawEvent(cwd, threadId, {
+          dir: 'server_request',
+          id: request.id,
+          method: request.method,
+          params: request.params,
+        });
         void this.handleServerRequest(currentExecution, request);
       };
-      const onExit = () => {
+      const onExit = (info: unknown) => {
+        void appendRawEvent(cwd, threadId, { dir: 'exit', data: info });
         void this.failExecution(currentExecution, new Error('Codex app-server exited before the turn finished.'));
+      };
+      const onRpcOut = (payload: Record<string, unknown>) => {
+        void appendRawEvent(cwd, threadId, {
+          dir: 'rpc_out',
+          id: payload.id as string | number | undefined,
+          method: typeof payload.method === 'string' ? payload.method : undefined,
+          params: payload.params,
+          result: payload.result,
+        });
+      };
+      const onRpcIn = (payload: Record<string, unknown>) => {
+        void appendRawEvent(cwd, threadId, {
+          dir: 'rpc_in',
+          id: payload.id as string | number | undefined,
+          result: payload.result,
+          error: payload.error,
+        });
+      };
+      const onStderr = (chunk: string) => {
+        void appendRawEvent(cwd, threadId, { dir: 'stderr', data: chunk });
+      };
+      const onProtocolError = (info: unknown) => {
+        void appendRawEvent(cwd, threadId, { dir: 'protocol_error', data: info });
       };
 
       currentExecution.detach = () => {
         input.client.off?.('notification', onNotification);
         input.client.off?.('serverRequest', onServerRequest);
         input.client.off?.('exit', onExit);
+        input.client.off?.('rpcOut', onRpcOut);
+        input.client.off?.('rpcIn', onRpcIn);
+        input.client.off?.('stderr', onStderr);
+        input.client.off?.('protocolError', onProtocolError);
       };
 
       input.client.on('notification', onNotification);
       input.client.on('serverRequest', onServerRequest);
       input.client.on('exit', onExit);
+      input.client.on('rpcOut', onRpcOut);
+      input.client.on('rpcIn', onRpcIn);
+      input.client.on('stderr', onStderr);
+      input.client.on('protocolError', onProtocolError);
+
+      void appendRawEvent(cwd, threadId, {
+        dir: 'daemon',
+        message: `launchTurn source=${input.source} turnId=${turnId} jobId=${job.id}`,
+      });
 
       setTimeout(() => {
         if (!currentExecution.settled) {
@@ -984,6 +1038,10 @@ export class CliCodexWorkerService {
   }
 
   private async completeExecution(execution: ActiveExecution, status: 'completed' | 'interrupted'): Promise<void> {
+    await appendRawEvent(execution.cwd, execution.threadId, {
+      dir: 'daemon',
+      message: `completeExecution status=${status} turnId=${execution.turnId}`,
+    });
     const shouldResolve = !execution.settled;
     execution.settled = true;
     execution.detach();
@@ -1008,6 +1066,10 @@ export class CliCodexWorkerService {
   }
 
   private async failExecution(execution: ActiveExecution, error: Error): Promise<void> {
+    await appendRawEvent(execution.cwd, execution.threadId, {
+      dir: 'daemon',
+      message: `failExecution turnId=${execution.turnId} error=${error.message}`,
+    });
     if (execution.settled) {
       return;
     }

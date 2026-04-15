@@ -52,6 +52,10 @@ export function logPath(cwd: string, threadId: string): string {
   return join(ensureWorkspaceDirs(cwd).logDir, `${threadId}.output`);
 }
 
+export function rawLogPath(cwd: string, threadId: string): string {
+  return join(ensureWorkspaceDirs(cwd).logDir, `${threadId}.raw.ndjson`);
+}
+
 export function buildDaemonToken(): string {
   return randomUUID();
 }

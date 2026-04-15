@@ -158,6 +158,7 @@ export class AppServerClient extends EventEmitter {
     if (!this.child) {
       throw new Error('codex app-server not started');
     }
+    this.emit('rpcOut', payload);
     this.child.stdin.write(`${JSON.stringify(payload)}\n`);
   }
 
@@ -188,6 +189,7 @@ export class AppServerClient extends EventEmitter {
     }
 
     if ((typeof message.id === 'string' || typeof message.id === 'number') && (Object.hasOwn(message, 'result') || Object.hasOwn(message, 'error')) && !message.method) {
+      this.emit('rpcIn', message);
       const key = requestKey(message.id);
       const pending = this.pending.get(key);
       if (!pending) {
