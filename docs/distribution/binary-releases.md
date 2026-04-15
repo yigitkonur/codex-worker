@@ -1,6 +1,6 @@
 # Binary Releases
 
-`codex-worker` now has a staged Bun-binary distribution pipeline. The existing npm release workflow stays in place, and a gated follow-up workflow can publish standalone GitHub Release binaries and update a Homebrew formula in this same repository once `ENABLE_BINARY_RELEASE=true` is turned on.
+`codex-worker` now has a live Bun-binary distribution pipeline. The existing npm release workflow stays in place, and the follow-up workflow publishes standalone GitHub Release binaries, a release-hosted `install.sh`, and an updated Homebrew formula in this same repository.
 
 When the binary release path is enabled, those binaries bundle the runtime, so end users do not need Node.js or Bun installed. The external dependency stays the same as the npm package: the `codex` CLI must already be installed and authenticated on the target machine.
 
@@ -42,6 +42,7 @@ Current workflow layout:
 When binary publishing is enabled, the publish workflow does two same-repository write operations with the built-in `GITHUB_TOKEN`:
 
 - create or update the GitHub Release and upload the binary assets
+- upload the release-hosted `install.sh` asset used by the curl installer path
 - commit `Formula/codex-worker.rb` back to the publish branch so Homebrew users can update from this repository as a custom tap
 
 That design avoids two problems at once:
@@ -54,6 +55,7 @@ That design avoids two problems at once:
 
 Current release assets:
 
+- `install.sh`
 - `codex-worker-linux-x64`
 - `codex-worker-linux-x64-baseline`
 - `codex-worker-linux-arm64`
@@ -69,6 +71,7 @@ Windows ARM64 is not published yet because Bun does not currently ship a native 
 
 - Bun is pinned to `1.3.11` in CI and release automation. Do not float the version without re-running local and CI smoke checks.
 - GitHub workflow actions are on the Node-24-compatible major lines: `actions/checkout@v6`, `actions/setup-node@v6`, `actions/upload-artifact@v7`, and `actions/download-artifact@v8`.
+- The release-hosted installer entrypoint is `https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh`. That is preferable to `raw/main` because it stays coupled to a published release rather than a moving branch tip.
 - The Windows x64 binary currently ships without `--bytecode`. Local verification on April 15, 2026 showed Bun 1.3.11 fails to compile this CLI for `bun-windows-x64` when `--bytecode` is enabled because the entrypoint uses top-level `await`.
 - The `*-musl` binaries run on Alpine, but they are not `FROM scratch` compatible.
 - The `linux-x64-baseline` build exists for older x86_64 CPUs that cannot run the default Bun Linux target.
@@ -107,11 +110,50 @@ Repository secrets:
 
 Recommended rollout:
 
-1. Merge the validation workflow and watch it pass on real GitHub-hosted runners.
-2. Set `ENABLE_BINARY_RELEASE=true`.
-3. Confirm a real release creates GitHub Release assets, checksums, and commits `Formula/codex-worker.rb` back to the publish branch.
-4. Confirm `brew tap yigitkonur/codex-worker https://github.com/yigitkonur/codex-worker && brew update && brew upgrade yigitkonur/codex-worker/codex-worker` picks up the new formula revision.
-5. If you want a dedicated tap mirror, create the `homebrew-...` repo, then set `ENABLE_HOMEBREW_TAP_SYNC=true`, `HOMEBREW_TAP_REPO`, and `HOMEBREW_TAP_TOKEN`.
+1. Confirm a real release creates GitHub Release assets, checksums, `install.sh`, and commits `Formula/codex-worker.rb` back to the publish branch.
+2. Confirm `curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | sudo bash` installs the correct binary for the current host and verifies checksums.
+3. Confirm `brew tap yigitkonur/codex-worker https://github.com/yigitkonur/codex-worker && brew update && brew upgrade yigitkonur/codex-worker/codex-worker` picks up the new formula revision.
+4. If you want a dedicated tap mirror, create the `homebrew-...` repo, then set `ENABLE_HOMEBREW_TAP_SYNC=true`, `HOMEBREW_TAP_REPO`, and `HOMEBREW_TAP_TOKEN`.
+
+## Installer
+
+The release-hosted installer is designed for the same GitHub Release asset set this repo already publishes.
+
+Recommended install:
+
+```bash
+sudo -v ; curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | sudo bash
+```
+
+User-local install:
+
+```bash
+curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | bash -s -- --install-dir "$HOME/.local/bin"
+```
+
+Supported behaviors:
+
+- Detects `Darwin` vs `Linux` and `arm64` vs `x64`
+- Detects `glibc` vs `musl` on Linux and selects the matching asset
+- Selects `linux-x64-baseline` on older Linux x86_64 CPUs that do not report `avx2`
+- Downloads the matching `.sha256` file and verifies the binary before installing
+- Skips re-installing when the same version is already present unless `--force` is passed
+
+Supported flags:
+
+- `--version <version>` installs a specific release tag
+- `--install-dir <dir>` chooses a custom install destination
+- `--target <asset-name>` overrides auto-detection
+- `--repo <owner/repo>` installs from another GitHub repo with the same asset layout
+- `--no-verify` skips checksum verification
+- `--force` reinstalls even if the same version is already present
+- `--dry-run` prints the resolved install plan without downloading
+
+Installer caveats:
+
+- `codex-worker` still requires the upstream `codex` CLI to be installed and authenticated
+- There is no published Windows PowerShell installer in this pass; Windows users should use the `.exe` release asset directly
+- There is no published musl baseline asset, so older Alpine x86_64 CPUs without `avx2` are not auto-supported by the installer
 
 ## Verification
 

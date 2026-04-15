@@ -92,9 +92,9 @@ jobs:
           TAG: ${{ needs.resolve-release.outputs.tag }}
         run: |
           if gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release upload "${TAG}" dist/release/* dist/homebrew/Formula/codex-worker.rb --clobber
+            gh release upload "${TAG}" dist/release/* dist/homebrew/Formula/codex-worker.rb dist/install.sh --clobber
           else
-            gh release create "${TAG}" dist/release/* dist/homebrew/Formula/codex-worker.rb \
+            gh release create "${TAG}" dist/release/* dist/homebrew/Formula/codex-worker.rb dist/install.sh \
               --title "${TAG}" \
               --generate-notes \
               --verify-tag

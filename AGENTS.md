@@ -137,13 +137,15 @@ The handbook is also the authoritative reference for existing behavior — if th
 ## Binary Distribution
 
 - Standalone release binaries are built with `bun build --compile` via `scripts/build-binary.mjs`.
+- The first-class curl installer lives at repo root as [`install.sh`](./install.sh) and is published as a GitHub Release asset named `install.sh`.
+- The stable installer URL is `https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh`, not `raw/main`.
 - Local host-binary smoke path: `npm run bun:compile` then `node --import tsx --test test/compiled-binary.test.ts`.
 - `.github/workflows/release.yml` remains the live npm release publisher on `main`; do not replace it with the binary path until the staged rollout is proven on GitHub-hosted runners.
 - The staged rollout has already been proven on GitHub-hosted runners: `binary-distribution-validate` passed end to end on 2026-04-15 after the action-runtime upgrades. Treat `ENABLE_BINARY_RELEASE` as an activation switch now, not as an unverified experiment toggle.
 - `.github/workflows/release.yml` now writes and uploads a `release-metadata` artifact. `.github/workflows/release-binaries.yml` depends on that artifact to recover the tag ref from the triggering `workflow_run`; do not remove or rename this handoff without updating both workflows.
 - `.github/workflows/binary-distribution-validate.yml` runs on every push, pull request, and manual dispatch and exercises the Bun binary distribution path without publishing.
 - `.github/workflows/release-binaries.yml` is the gated follow-up publisher for GitHub Release assets and optional Homebrew tap sync. It activates only when the repository variable `ENABLE_BINARY_RELEASE=true` is set, and it owns the write-capable publish jobs directly.
-- `.github/workflows/binary-distribution-common.yml` is the shared read-only build workflow called by both validation and release publishing; keep the target matrix, checksum generation, smoke jobs, and Homebrew formula rendering aligned there instead of duplicating logic.
+- `.github/workflows/binary-distribution-common.yml` is the shared read-only build workflow called by both validation and release publishing; keep the target matrix, checksum generation, installer asset, smoke jobs, and Homebrew formula rendering aligned there instead of duplicating logic.
 - GitHub Actions runtime baseline: first-party workflow actions are on the Node-24-compatible major lines (`actions/checkout@v6`, `actions/setup-node@v6`, `actions/upload-artifact@v7`, `actions/download-artifact@v8`). Do not downgrade them back onto the deprecated Node 20 action runtime.
 - Reusable workflow permissions are caller-bounded. If a called workflow needs `contents: write`, the caller job in `.github/workflows/release-binaries.yml` must grant it explicitly; job-level write permissions inside the reusable workflow are not enough on their own.
 - When binary publishing is enabled, the default Homebrew path is same-repository: the publish workflow updates `Formula/codex-worker.rb` on the release branch using the built-in `GITHUB_TOKEN`.
@@ -159,6 +161,7 @@ The handbook is also the authoritative reference for existing behavior — if th
 - Do not claim CLI behavior works unless you ran the exact command that proves it.
 - Run `npm test` for code changes. If you touched daemon/client/runtime wiring, operator workflows, or command behavior, also run `npm run smoke`.
 - If you changed the Bun binary build path, also run `npm run bun:compile` and `node --import tsx --test test/compiled-binary.test.ts`.
+- If you changed the installer, also run `bash -n install.sh` and `node --import tsx --test test/install-script.test.ts`.
 - If you changed the release-target matrix, workflow helper scripts, or Homebrew formula generation, also run `npm run bun:compile:all` or the exact `npm run bun:compile:target -- <target>` path you touched, plus `node --import tsx --test test/build-binary.test.ts test/homebrew-formula.test.ts`.
 - Verify command-surface or output-format changes through the real CLI entrypoint (`node --import tsx src/cli.ts ...` or the bin script), not by code inspection alone.
 - If you changed `read` or `logs`, validate against a real thread so artifact paths and display-log output are visible.

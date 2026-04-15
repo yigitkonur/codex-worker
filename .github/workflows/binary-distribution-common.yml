@@ -176,4 +176,5 @@ jobs:
           path: |
             dist/release
             dist/homebrew/Formula/codex-worker.rb
+            install.sh
           if-no-files-found: error

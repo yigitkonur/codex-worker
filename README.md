@@ -24,13 +24,27 @@ One-off execution:
 npx codex-worker doctor
 ```
 
-Standalone binary from GitHub Releases, once binary publishing is enabled:
+Standalone binary from GitHub Releases:
+
+```bash
+sudo -v ; curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | sudo bash
+codex-worker doctor
+```
+
+User-local install without `sudo`:
+
+```bash
+curl -fsSL https://github.com/yigitkonur/codex-worker/releases/latest/download/install.sh | bash -s -- --install-dir "$HOME/.local/bin"
+```
+
+Manual binary install remains available:
 
 ```bash
 curl -LO https://github.com/yigitkonur/codex-worker/releases/latest/download/codex-worker-linux-x64
+curl -LO https://github.com/yigitkonur/codex-worker/releases/latest/download/codex-worker-linux-x64.sha256
+sha256sum -c codex-worker-linux-x64.sha256
 chmod +x codex-worker-linux-x64
 mv codex-worker-linux-x64 /usr/local/bin/codex-worker
-codex-worker doctor
 ```
 
 Homebrew from this repository, once binary publishing is enabled:
@@ -48,7 +62,7 @@ npm run build
 node dist/src/cli.js --help
 ```
 
-The repository now includes a staged Bun-binary distribution pipeline. The existing npm release workflow stays live, every push validates the binary distribution path, and maintainers can enable binary publishing separately after remote validation. Full rollout details live in [`docs/distribution/binary-releases.md`](./docs/distribution/binary-releases.md).
+The repository now includes a live Bun-binary distribution pipeline. Every push validates the binary distribution path, GitHub Releases publish the standalone binaries, and the installer script is shipped as a release asset. Full rollout details live in [`docs/distribution/binary-releases.md`](./docs/distribution/binary-releases.md).
 
 ## CLI Surface
 
