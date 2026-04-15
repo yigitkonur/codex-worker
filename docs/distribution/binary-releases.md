@@ -1,6 +1,6 @@
 # Binary Releases
 
-`codex-worker` now has a staged Bun-binary distribution pipeline. The existing npm release workflow stays in place until the binary path has been validated remotely, then a gated follow-up workflow can publish standalone GitHub Release binaries and update a Homebrew formula in this same repository.
+`codex-worker` now has a staged Bun-binary distribution pipeline. The existing npm release workflow stays in place, and a gated follow-up workflow can publish standalone GitHub Release binaries and update a Homebrew formula in this same repository once `ENABLE_BINARY_RELEASE=true` is turned on.
 
 When the binary release path is enabled, those binaries bundle the runtime, so end users do not need Node.js or Bun installed. The external dependency stays the same as the npm package: the `codex` CLI must already be installed and authenticated on the target machine.
 
@@ -30,7 +30,7 @@ The helper script resolves the workspace-pinned Bun binary from `node_modules`, 
 
 ## Release Workflow
 
-The rollout is intentionally split so the current live releaser is not replaced before the new path has been exercised on every push.
+The rollout is intentionally split so the current live releaser is not replaced before the new path has been exercised on every push. That proof now exists: the validation workflow passed end to end on GitHub-hosted runners on April 15, 2026 after the action-runtime upgrades.
 
 Current workflow layout:
 
@@ -48,6 +48,7 @@ That design avoids two problems at once:
 
 - the live release workflow is not replaced until the new path has been remotely exercised on every push
 - the follow-up binary publisher does not depend on a `push.tags` workflow that GitHub’s default `GITHUB_TOKEN` would fail to trigger
+- the version-bump push from `release.yml` and the same-repo formula-sync push from `release-binaries.yml` do not recursively retrigger `push` workflows, because pushes created by the built-in `GITHUB_TOKEN` do not fan out into new workflow runs
 
 ## Release Targets
 
@@ -67,6 +68,7 @@ Windows ARM64 is not published yet because Bun does not currently ship a native 
 ## Runtime Notes
 
 - Bun is pinned to `1.3.11` in CI and release automation. Do not float the version without re-running local and CI smoke checks.
+- GitHub workflow actions are on the Node-24-compatible major lines: `actions/checkout@v6`, `actions/setup-node@v6`, `actions/upload-artifact@v7`, and `actions/download-artifact@v8`.
 - The Windows x64 binary currently ships without `--bytecode`. Local verification on April 15, 2026 showed Bun 1.3.11 fails to compile this CLI for `bun-windows-x64` when `--bytecode` is enabled because the entrypoint uses top-level `await`.
 - The `*-musl` binaries run on Alpine, but they are not `FROM scratch` compatible.
 - The `linux-x64-baseline` build exists for older x86_64 CPUs that cannot run the default Bun Linux target.
