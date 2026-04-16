@@ -8,8 +8,10 @@ export type WorkerFailureCategory = 'auth' | 'rate_limit' | 'connection' | 'tran
 
 /**
  * Normalized tag for every possible turn failure.
- * The first 14 map 1:1 to the upstream CodexErrorInfo discriminated union.
- * The remaining 4 cover failures that originate inside codex-worker itself.
+ * All tags except the final 4 (`app_server_exited`, `idle_timeout`,
+ * `spawn_failed`, and `protocol_error`) map 1:1 to the upstream
+ * CodexErrorInfo discriminated union.
+ * The final 4 cover failures that originate inside codex-worker itself.
  */
 export type CodexErrorTag =
   | 'context_window_exceeded'

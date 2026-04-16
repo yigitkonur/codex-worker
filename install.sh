@@ -546,7 +546,7 @@ EOF
   local IFS=':'
   local dir_entry found_path
   for dir_entry in ${PATH}; do
-    found_path="${dir_entry}/${CODEX_WORKER_DEFAULT_BIN_NAME}"
+    found_path="${dir_entry:-.}/${CODEX_WORKER_DEFAULT_BIN_NAME}"
     if [[ -x "${found_path}" && "${found_path}" != "${install_path}" && "${found_path}" != "${active_path:-}" ]]; then
       local stale_version
       stale_version="$("${found_path}" --version 2>/dev/null || true)"

@@ -280,7 +280,7 @@ async function commandRun(taskFile: string, options: {
   label?: string;
 }, program: Command): Promise<void> {
   if (options.plan && options.noPlan) {
-    throw new Error('Cannot use --plan and --no-plan together.');
+    throw new Error('Cannot use --plan and --skip-plan together.');
   }
 
   const payload = await readPrompt(taskFile);

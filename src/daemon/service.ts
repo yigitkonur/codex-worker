@@ -1293,7 +1293,8 @@ export class CliCodexWorkerService {
           payload: { type: 'turn.retrying', error: detail.message, tag: detail.tag, errorInfo: detail },
           logLine: `retrying [${detail.tag}]: ${detail.message}`,
         });
-        execution.writer?.event('error', { ...params, willRetry: true });
+        // Note: the writer already received this event from the unconditional
+        // forward at the top of handleNotification (line 1232). No second emit.
         return;
       }
       await this.failExecution(execution, detail);

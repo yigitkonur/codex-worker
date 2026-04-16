@@ -1,4 +1,4 @@
-import { readFile, stat } from 'node:fs/promises';
+import { open, readFile, stat } from 'node:fs/promises';
 
 import { sendDaemonRequest } from './daemon/client.js';
 import { shortenPath } from './output.js';
@@ -124,6 +124,17 @@ async function fileSize(path: string): Promise<number> {
   }
 }
 
+async function readBytesFrom(path: string, offset: number, length: number): Promise<string> {
+  const fh = await open(path, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    await fh.read(buf, 0, length, offset);
+    return buf.toString('utf8');
+  } finally {
+    await fh.close();
+  }
+}
+
 export async function monitorThread(threadId: string, options: MonitorOptions): Promise<void> {
   const result = await sendDaemonRequest('read', { threadId, tailLines: 0 });
   const artifacts = result.artifacts as Record<string, unknown> | undefined;
@@ -144,7 +155,9 @@ export async function monitorThread(threadId: string, options: MonitorOptions): 
   };
 
   const initialLines = await readRawLines(rawLogPath);
-  for (const line of initialLines.slice(-options.initialTail)) {
+  const initialTail = Math.max(0, Math.trunc(options.initialTail));
+  const initialLinesToPrint = initialTail === 0 ? [] : initialLines.slice(-initialTail);
+  for (const line of initialLinesToPrint) {
     printLine(line);
   }
 
@@ -152,18 +165,24 @@ export async function monitorThread(threadId: string, options: MonitorOptions): 
     return;
   }
 
-  let lineCount = initialLines.length;
-  let lastSize = await fileSize(rawLogPath);
+  let byteOffset = await fileSize(rawLogPath);
+  let tailBuffer = '';
 
   while (true) {
     const currentSize = await fileSize(rawLogPath);
-    if (currentSize > lastSize) {
-      const lines = await readRawLines(rawLogPath);
-      for (const line of lines.slice(lineCount)) {
-        printLine(line);
+    if (currentSize > byteOffset) {
+      const chunk = await readBytesFrom(rawLogPath, byteOffset, currentSize - byteOffset);
+      byteOffset = currentSize;
+      tailBuffer += chunk;
+      let newlineIndex = tailBuffer.indexOf('\n');
+      while (newlineIndex >= 0) {
+        const line = tailBuffer.slice(0, newlineIndex).trim();
+        tailBuffer = tailBuffer.slice(newlineIndex + 1);
+        if (line) {
+          printLine(line);
+        }
+        newlineIndex = tailBuffer.indexOf('\n');
       }
-      lineCount = lines.length;
-      lastSize = currentSize;
     }
     await sleep(500);
   }

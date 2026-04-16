@@ -148,9 +148,7 @@ function formatCompactLiveEvent(
     const icon = status === 'completed' ? '✅' : (status === 'interrupted' ? '⚠️' : '❌');
     if (status === 'failed') {
       const turnError = isRecord(turn.error) ? turn.error : undefined;
-      const tag = turnError?.codexErrorInfo != null
-        ? String(typeof turnError.codexErrorInfo === 'string' ? turnError.codexErrorInfo : Object.keys(turnError.codexErrorInfo as object)[0] ?? 'other')
-        : undefined;
+      const tag = normalizeErrorTag(turnError?.codexErrorInfo);
       const msg = String(turnError?.message ?? turn.error ?? '');
       const tagLabel = tag ? `[${tag}] ` : '';
       return { output: `${flushPrefix}${icon} Turn failed ${tagLabel}${msg}`.trimEnd(), buffer: '' };
@@ -171,10 +169,7 @@ function formatCompactLiveEvent(
     if (willRetry) {
       return { output: `⚠️  Error (retrying): ${msg}` };
     }
-    const codexInfo = errObj?.codexErrorInfo;
-    const tag = codexInfo != null
-      ? (typeof codexInfo === 'string' ? codexInfo : Object.keys(codexInfo as object)[0] ?? '')
-      : '';
+    const tag = normalizeErrorTag(errObj?.codexErrorInfo) ?? '';
     return { output: `❌ Error${tag ? ` [${tag}]` : ''}: ${msg}` };
   }
 
@@ -298,4 +293,15 @@ function formatVerboseTranscriptEvent(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Normalize a camelCase codexErrorInfo key to snake_case tag. */
+function normalizeErrorTag(codexErrorInfo: unknown): string | undefined {
+  if (codexErrorInfo == null) return undefined;
+  const key = typeof codexErrorInfo === 'string'
+    ? codexErrorInfo
+    : (isRecord(codexErrorInfo) ? Object.keys(codexErrorInfo)[0] : undefined);
+  if (!key) return undefined;
+  // camelCase → snake_case
+  return key.replace(/[A-Z]/g, (ch) => `_${ch.toLowerCase()}`);
 }
