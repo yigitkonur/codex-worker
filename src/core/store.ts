@@ -9,6 +9,7 @@ import type {
   PendingServerRequestRecord,
   StateFile,
   ThreadRecord,
+  TurnErrorDetail,
   TurnRecord,
 } from './types.js';
 
@@ -119,6 +120,25 @@ export class PersistentStore {
     return turn;
   }
 
+  replaceTurnsForThread(threadId: string, turns: Array<Partial<TurnRecord> & { id: string }>): void {
+    this.state.turns = this.state.turns.filter((turn) => turn.threadId !== threadId);
+    const timestamp = nowIso();
+    for (const input of turns) {
+      this.state.turns.push({
+        id: input.id,
+        threadId,
+        status: typeof input.status === 'string' ? input.status : 'completed',
+        source: (input.source as TurnRecord['source'] | undefined) ?? 'turn/start',
+        inputFilePath: typeof input.inputFilePath === 'string' ? input.inputFilePath : undefined,
+        promptPreview: typeof input.promptPreview === 'string' ? input.promptPreview : '',
+        startedAt: typeof input.startedAt === 'string' ? input.startedAt : timestamp,
+        completedAt: typeof input.completedAt === 'string' ? input.completedAt : undefined,
+        error: typeof input.error === 'string' ? input.error : undefined,
+        errorInfo: input.errorInfo && typeof input.errorInfo === 'object' ? input.errorInfo as TurnErrorDetail : undefined,
+      });
+    }
+  }
+
   createJob(input: Omit<LocalJobRecord, 'id' | 'createdAt' | 'updatedAt'>): LocalJobRecord {
     const timestamp = nowIso();
     const record: LocalJobRecord = {
@@ -139,6 +159,11 @@ export class PersistentStore {
 
   listJobs(): LocalJobRecord[] {
     return [...this.state.jobs].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  pruneJobsForThreadTurns(threadId: string, allowedTurnIds: string[]): void {
+    const allowed = new Set(allowedTurnIds.map((id) => id.toLowerCase()));
+    this.state.jobs = this.state.jobs.filter((job) => job.threadId !== threadId || allowed.has(job.turnId.toLowerCase()));
   }
 
   updateJob(jobId: string, updates: Partial<LocalJobRecord>): LocalJobRecord {
@@ -176,7 +201,7 @@ export class PersistentStore {
     return this.state.pendingRequests.find((request) => request.id.toLowerCase() === lowered);
   }
 
-  getPendingRequestByRequestId(requestId: string, connectionKey: string): PendingServerRequestRecord | undefined {
+  getPendingRequestByRequestId(requestId: PendingServerRequestRecord['requestId'], connectionKey: string): PendingServerRequestRecord | undefined {
     return this.state.pendingRequests.find(
       (entry) => entry.requestId === requestId && entry.connectionKey === connectionKey,
     );
@@ -185,6 +210,19 @@ export class PersistentStore {
   listPendingRequests(status?: PendingServerRequestRecord['status']): PendingServerRequestRecord[] {
     const entries = status ? this.state.pendingRequests.filter((entry) => entry.status === status) : this.state.pendingRequests;
     return [...entries].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  prunePendingRequestsForThreadTurns(threadId: string, allowedTurnIds: string[]): void {
+    const allowed = new Set(allowedTurnIds.map((id) => id.toLowerCase()));
+    this.state.pendingRequests = this.state.pendingRequests.filter((request) => {
+      if (request.threadId !== threadId) {
+        return true;
+      }
+      if (!request.turnId) {
+        return false;
+      }
+      return allowed.has(request.turnId.toLowerCase());
+    });
   }
 
   resolvePendingRequest(id: string, response: Record<string, unknown>): PendingServerRequestRecord {
@@ -223,14 +261,22 @@ export class PersistentStore {
     payload: Record<string, unknown>;
     logLine?: string | undefined;
   }): Promise<void> {
-    await mkdir(ensureStateRoot().rootDir, { recursive: true });
-    await appendFile(transcriptPath(input.cwd, input.threadId), `${JSON.stringify(input.payload)}\n`);
-    if (input.logLine) {
-      await appendFile(logPath(input.cwd, input.threadId), `${input.logLine}\n`);
+    try {
+      await mkdir(ensureStateRoot().rootDir, { recursive: true });
+      await appendFile(transcriptPath(input.cwd, input.threadId), `${JSON.stringify(input.payload)}\n`);
+      if (input.logLine) {
+        await appendFile(logPath(input.cwd, input.threadId), `${input.logLine}\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`warning: failed to write thread event: ${err instanceof Error ? err.message : String(err)}\n`);
     }
   }
 
   async persist(): Promise<void> {
-    await writeFile(this.root.registryPath, JSON.stringify(this.state, null, 2));
+    try {
+      await writeFile(this.root.registryPath, JSON.stringify(this.state, null, 2));
+    } catch (err) {
+      process.stderr.write(`warning: failed to persist registry: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
   }
 }

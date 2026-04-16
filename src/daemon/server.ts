@@ -48,6 +48,13 @@ export async function runDaemonServer(): Promise<void> {
         newlineIndex = buffer.indexOf('\n');
       }
     });
+    socket.on('error', () => {
+      // Client socket error — nothing to recover; request handler has its own error path.
+    });
+  });
+
+  server.on('error', (err) => {
+    process.stderr.write(`daemon server error: ${err.message}\n`);
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -121,6 +128,9 @@ async function handleRequest(
       case 'thread.list':
         result = await service.threadList(envelope.args ?? {});
         break;
+      case 'thread.rollback':
+        result = await service.threadRollback(envelope.args ?? {});
+        break;
       case 'turn.start':
         result = await service.turnStart(envelope.args ?? {}, writer);
         break;
@@ -129,6 +139,12 @@ async function handleRequest(
         break;
       case 'turn.interrupt':
         result = await service.turnInterrupt(envelope.args ?? {});
+        break;
+      case 'review.start':
+        result = await service.reviewStart(envelope.args ?? {}, writer);
+        break;
+      case 'command.exec':
+        result = await service.commandExec(envelope.args ?? {}, writer);
         break;
       case 'model.list':
         result = await service.modelList(envelope.args ?? {});

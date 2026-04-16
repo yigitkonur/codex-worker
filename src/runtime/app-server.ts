@@ -77,9 +77,18 @@ export class AppServerClient extends EventEmitter {
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk: string) => this.handleChunk(chunk));
+    child.stdout.on('error', (err) => {
+      this.emit('protocolError', { message: `stdout error: ${err.message}` });
+    });
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
       this.emit('stderr', chunk);
+    });
+    child.stderr.on('error', () => {
+      // stderr stream error — best-effort, nothing to propagate
+    });
+    child.stdin.on('error', (err) => {
+      this.emit('protocolError', { message: `stdin error: ${err.message}` });
     });
     child.on('error', (error) => {
       this.started = false;
@@ -95,6 +104,7 @@ export class AppServerClient extends EventEmitter {
       this.emit('exit', { code, signal });
     });
 
+    const experimentalApi = process.env.CODEX_WORKER_EXPERIMENTAL_API === '1';
     await this.request('initialize', {
       clientInfo: {
         name: this.clientName,
@@ -102,7 +112,7 @@ export class AppServerClient extends EventEmitter {
         version: pkgMeta.version,
       },
       capabilities: {
-        experimentalApi: false,
+        experimentalApi,
         optOutNotificationMethods: null,
       },
     });
@@ -163,7 +173,11 @@ export class AppServerClient extends EventEmitter {
       throw new Error('codex app-server not started');
     }
     this.emit('rpcOut', payload);
-    this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+    try {
+      this.child.stdin.write(`${JSON.stringify(payload)}\n`);
+    } catch (err) {
+      this.emit('protocolError', { message: `stdin write failed: ${err instanceof Error ? err.message : String(err)}` });
+    }
   }
 
   private handleChunk(chunk: string): void {

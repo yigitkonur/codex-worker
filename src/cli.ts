@@ -14,10 +14,12 @@ import {
   createEventPrinter,
   formatSimpleActions,
   printJson,
+  renderExecResult,
   resolveOutputFormat,
   shortenPath,
   type OutputFormat,
 } from './output.js';
+import { monitorThread } from './monitor.js';
 
 function parseInteger(value: string | undefined, label: string): number | undefined {
   if (value === undefined) {
@@ -57,11 +59,22 @@ function renderTurnResult(result: Record<string, unknown>): string {
   const turn = result.turn && typeof result.turn === 'object'
     ? result.turn as Record<string, unknown>
     : undefined;
+  const turnStatus = String(result.status ?? turn?.status ?? 'unknown');
   const lines = [
     `Thread: ${String(result.threadId ?? 'unknown')}`,
     `Turn: ${String(result.turnId ?? turn?.id ?? 'unknown')}`,
-    `Status: ${String(result.status ?? turn?.status ?? 'unknown')}`,
+    `Status: ${turnStatus}`,
   ];
+
+  if (turnStatus === 'failed') {
+    const errorInfo = turn?.errorInfo as Record<string, unknown> | undefined;
+    const tag = errorInfo?.tag as string | undefined;
+    const errorMsg = (turn?.error ?? errorInfo?.message ?? result.error) as string | undefined;
+    if (errorMsg) {
+      const snippet = errorMsg.length > 200 ? errorMsg.slice(0, 200) + '…' : errorMsg;
+      lines.push(`Error: ${tag ? `[${tag}] ` : ''}${snippet}`);
+    }
+  }
 
   if (result.job && typeof result.job === 'object') {
     const job = result.job as Record<string, unknown>;
@@ -104,14 +117,22 @@ function renderReadResult(result: Record<string, unknown>): string {
     ? artifacts.displayLog as string[]
     : (Array.isArray(artifacts?.logTail) ? artifacts.logTail as string[] : []);
 
+  const threadStatus = String(localThread?.status ?? thread.status ?? 'unknown');
+  const lastError = localThread?.lastError as string | undefined;
   const lines = [
     `Thread: ${String(thread.id ?? localThread?.id ?? 'unknown')}`,
-    `Status: ${String(localThread?.status ?? thread.status ?? 'unknown')}`,
+    `Status: ${threadStatus}`,
     `Model: ${String(localThread?.model ?? 'unknown')}`,
     `cwd: ${shortenPath(String(localThread?.cwd ?? thread.cwd ?? ''))}`,
     `Turns tracked: ${turns.length}`,
     `Pending requests: ${pendingRequests.length}`,
   ];
+
+  if (threadStatus === 'failed' && lastError) {
+    const lastErrorTag = localThread?.lastErrorTag as string | undefined;
+    const snippet = lastError.length > 200 ? lastError.slice(0, 200) + '…' : lastError;
+    lines.push(`Error: ${lastErrorTag ? `[${lastErrorTag}] ` : ''}${snippet}`);
+  }
 
   if (artifacts?.transcriptPath || artifacts?.logPath) {
     lines.push('');
@@ -128,7 +149,16 @@ function renderReadResult(result: Record<string, unknown>): string {
     lines.push('');
     lines.push('Recent turns:');
     for (const turn of turns.slice(0, 5)) {
-      lines.push(`- ${String(turn.id)} ${String(turn.status)} ${String(turn.promptPreview ?? '')}`);
+      const tStatus = String(turn.status);
+      const turnError = turn.error as string | undefined;
+      const turnErrorInfo = turn.errorInfo as Record<string, unknown> | undefined;
+      const turnTag = turnErrorInfo?.tag as string | undefined;
+      if (tStatus === 'failed' && turnError) {
+        const errorSnippet = turnError.length > 200 ? turnError.slice(0, 200) + '…' : turnError;
+        lines.push(`- ${String(turn.id)} ${tStatus} ${turnTag ? `[${turnTag}] ` : ''}${errorSnippet}`);
+      } else {
+        lines.push(`- ${String(turn.id)} ${tStatus} ${String(turn.promptPreview ?? '')}`);
+      }
     }
   }
 
@@ -157,6 +187,10 @@ function renderLogResult(result: Record<string, unknown>): string {
   return lines.join('\n');
 }
 
+function collectValues(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 async function readPrompt(path: string): Promise<{ path: string; content: string }> {
   return await readMarkdownFile(path, process.cwd());
 }
@@ -178,6 +212,19 @@ async function commandThreadStart(options: {
     return;
   }
   process.stdout.write(`${renderThreadResult(result)}\n`);
+}
+
+async function commandThreadRollback(threadId: string, options: { turns?: string }, program: Command): Promise<void> {
+  const result = await sendDaemonRequest('thread.rollback', {
+    threadId,
+    numTurns: parseInteger(options.turns, 'turns') ?? 1,
+  });
+  if (getOutputFormat(program) === 'json') {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`${renderThreadResult(result)}\n`);
+  process.stdout.write('Rollback only rewinds thread history. It does not revert working-tree changes.\n');
 }
 
 async function commandTurnStart(threadId: string, promptFile: string, options: { async?: boolean; timeout?: string }, program: Command): Promise<void> {
@@ -221,19 +268,64 @@ async function commandTurnSteer(threadId: string, turnId: string, promptFile: st
   process.stdout.write(`${renderTurnResult(result)}\n`);
 }
 
-async function commandRun(taskFile: string, options: { cwd?: string; model?: string; async?: boolean; timeout?: string }, program: Command): Promise<void> {
+async function commandRun(taskFile: string, options: {
+  cwd?: string;
+  model?: string;
+  async?: boolean;
+  timeout?: string;
+  follow?: boolean;
+  plan?: boolean;
+  noPlan?: boolean;
+  effort?: string;
+  label?: string;
+}, program: Command): Promise<void> {
+  if (options.plan && options.noPlan) {
+    throw new Error('Cannot use --plan and --skip-plan together.');
+  }
+
   const payload = await readPrompt(taskFile);
   const output = getOutputFormat(program);
-  const printer = createEventPrinter(output === 'text' && !options.async && Boolean(process.stdout.isTTY));
-  const result = await sendDaemonRequest('run', {
+  const shouldFollow = options.follow ?? false;
+  const isAsync = options.async ?? shouldFollow;
+
+  // Build developer instructions based on flags
+  let developerHints = '';
+  if (options.plan) {
+    developerHints += 'Start by creating a plan before making any changes. Present the plan and wait for confirmation before proceeding.\n';
+  } else if (options.noPlan) {
+    developerHints += 'Skip planning and proceed directly with implementation.\n';
+  }
+  if (options.effort) {
+    developerHints += `Reasoning effort level: ${options.effort}.\n`;
+  }
+  if (options.label) {
+    developerHints += `Task label: ${options.label}.\n`;
+  }
+
+  const printer = createEventPrinter(
+    output === 'text' && !isAsync && Boolean(process.stdout.isTTY),
+    false,
+  );
+
+  const args: Record<string, unknown> = {
     cwd: resolvePath(options.cwd ?? process.cwd()),
     model: options.model,
-    content: payload.content,
+    content: developerHints ? `${developerHints}\n${payload.content}` : payload.content,
     inputFilePath: payload.path,
-    async: options.async ?? false,
+    async: isAsync,
     timeoutMs: parseInteger(options.timeout, 'timeout'),
-  }, { onEvent: printer.onEvent });
+  };
+
+  const result = await sendDaemonRequest('run', args, { onEvent: printer.onEvent });
   printer.finish();
+
+  if (shouldFollow && isAsync) {
+    const threadId = String(result.threadId ?? '');
+    if (threadId) {
+      await monitorThread(threadId, { follow: true, initialTail: 20 });
+      return;
+    }
+  }
 
   if (output === 'json') {
     printJson(result);
@@ -262,6 +354,65 @@ async function commandSend(threadId: string, messageFile: string, options: { asy
   process.stdout.write(`${renderTurnResult(result)}\n`);
 }
 
+async function commandReviewStart(
+  threadId: string,
+  options: {
+    commit?: string;
+    commitTitle?: string;
+    baseBranch?: string;
+    instructions?: string;
+    detached?: boolean;
+    async?: boolean;
+    timeout?: string;
+  },
+  program: Command,
+): Promise<void> {
+  const output = getOutputFormat(program);
+  const printer = createEventPrinter(output === 'text' && !options.async && Boolean(process.stdout.isTTY));
+  const result = await sendDaemonRequest('review.start', {
+    threadId,
+    commit: options.commit,
+    commitTitle: options.commitTitle,
+    baseBranch: options.baseBranch,
+    instructions: options.instructions,
+    detached: options.detached ?? false,
+    async: options.async ?? false,
+    timeoutMs: parseInteger(options.timeout, 'timeout'),
+  }, { onEvent: printer.onEvent });
+  printer.finish();
+
+  if (output === 'json') {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`${renderTurnResult(result)}\n`);
+}
+
+async function commandExec(
+  argv: string[],
+  options: { cwd?: string; sandbox?: string; timeout?: string; stream?: boolean; tty?: boolean },
+  program: Command,
+): Promise<void> {
+  const output = getOutputFormat(program);
+  const printer = createEventPrinter(output === 'text' && Boolean(process.stdout.isTTY));
+  const result = await sendDaemonRequest('command.exec', {
+    command: argv,
+    cwd: options.cwd ? resolvePath(options.cwd) : undefined,
+    sandboxPolicy: options.sandbox,
+    tty: options.tty ?? false,
+    streamStdoutStderr: options.stream ?? false,
+    processId: options.stream || options.tty ? `exec-${Date.now()}` : undefined,
+    timeoutMs: parseInteger(options.timeout, 'timeout'),
+  }, { onEvent: printer.onEvent });
+  printer.finish();
+
+  if (output === 'json') {
+    printJson(result);
+    return;
+  }
+  process.stdout.write(`${renderExecResult(result)}\n`);
+}
+
 const program = new Command();
 
 program
@@ -278,8 +429,13 @@ program
   .option('--model <id>', 'Model id')
   .option('--async', 'Return immediately with thread/turn ids')
   .option('--timeout <ms>', 'Wait timeout in milliseconds')
+  .option('--follow', 'Start async then stream events until completion')
+  .option('--plan', 'Instruct agent to plan before implementing')
+  .option('--skip-plan', 'Instruct agent to skip planning')
+  .option('--effort <level>', 'Reasoning effort hint (low, medium, high)')
+  .option('--label <text>', 'Task label for identification')
   .action(async (taskFile, options) => {
-    await commandRun(taskFile, options, program);
+    await commandRun(taskFile, { ...options, noPlan: options.skipPlan }, program);
   });
 
 program
@@ -386,6 +542,27 @@ thread
     process.stdout.write(`${renderListResult(result)}\n`);
   });
 
+program
+  .command('monitor')
+  .description('Follow raw transport events for a thread')
+  .argument('<thread-id>')
+  .option('--tail <n>', 'Initial raw-log lines to replay')
+  .option('--no-follow', 'Print the current tail and exit')
+  .action(async (threadId, options) => {
+    await monitorThread(threadId, {
+      follow: options.follow ?? true,
+      initialTail: parseInteger(options.tail, 'tail') ?? 20,
+    });
+  });
+
+thread
+  .command('rollback')
+  .argument('<thread-id>')
+  .option('--turns <n>', 'Number of turns to roll back')
+  .action(async (threadId, options) => {
+    await commandThreadRollback(threadId, options, program);
+  });
+
 const turn = program.command('turn').description('Protocol-first turn operations');
 turn
   .command('start')
@@ -419,6 +596,35 @@ turn
       return;
     }
     process.stdout.write(`${renderTurnResult(result)}\n`);
+  });
+
+program
+  .command('review')
+  .description('Run Codex review on a thread')
+  .argument('<thread-id>')
+  .option('--commit <sha>', 'Review a specific commit')
+  .option('--commit-title <text>', 'Optional label for --commit')
+  .option('--base-branch <name>', 'Review diff against a base branch')
+  .option('--instructions <text>', 'Custom review instructions')
+  .option('--detached', 'Run review on a detached review thread')
+  .option('--async', 'Return immediately with thread/turn ids')
+  .option('--timeout <ms>', 'Wait timeout in milliseconds')
+  .action(async (threadId, options) => {
+    await commandReviewStart(threadId, options, program);
+  });
+
+program
+  .command('exec')
+  .description('Run a single command under the Codex server sandbox without creating a thread')
+  .allowExcessArguments(true)
+  .argument('<argv...>')
+  .option('--cwd <dir>', 'Working directory')
+  .option('--sandbox <policy>', 'Sandbox policy name')
+  .option('--timeout <ms>', 'Timeout in milliseconds')
+  .option('--stream', 'Stream stdout/stderr during execution')
+  .option('--tty', 'Allocate a PTY')
+  .action(async (argv, options) => {
+    await commandExec(argv, options, program);
   });
 
 program
@@ -505,7 +711,7 @@ request
   .command('list')
   .option('--status <status>', 'Filter by pending/responded/failed')
   .action(async (options) => {
-    const result = await sendDaemonRequest('request.list', { status: options.status });
+    const result = await sendDaemonRequest('request.list', { status: options.status ?? 'pending' });
     if (getOutputFormat(program) === 'json') {
       printJson(result);
       return;
@@ -526,14 +732,18 @@ request
   .argument('<request-id>')
   .option('--json <payload>', 'Raw JSON response payload')
   .option('--decision <decision>', 'Decision string for approval requests')
-  .option('--answer <text>', 'Answer text for user-input requests')
+  .option('--decision-json <json>', 'Structured decision JSON for approval amendments')
+  .option('--answer <text>', 'Answer text for user-input requests', collectValues, [])
+  .option('--note <text>', 'Free-form note for isOther prompts')
   .option('--question-id <id>', 'Question id for --answer')
   .action(async (requestId, options) => {
     const result = await sendDaemonRequest('request.respond', {
       requestId,
       json: options.json,
       decision: options.decision,
+      decisionJson: options.decisionJson,
       answer: options.answer,
+      note: options.note,
       questionId: options.questionId,
     });
     if (getOutputFormat(program) === 'json') {
@@ -550,9 +760,10 @@ program
   .option('--turn-id <id>', 'Turn id')
   .option('--job-id <id>', 'Job id')
   .option('--timeout <ms>', 'Timeout in milliseconds')
+  .option('--compact', 'Show concise event output')
   .action(async (options) => {
     const output = getOutputFormat(program);
-    const printer = createEventPrinter(output === 'text' && Boolean(process.stdout.isTTY));
+    const printer = createEventPrinter(output === 'text' && Boolean(process.stdout.isTTY), options.compact ?? false);
     const result = await sendDaemonRequest('wait', {
       threadId: options.threadId,
       turnId: options.turnId,
