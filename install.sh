@@ -531,6 +531,28 @@ EOF
   if [[ "$(cw_current_uid)" != "0" && ":${PATH}:" != *":${install_dir}:"* ]]; then
     cw_warn "${install_dir} is not currently on PATH"
   fi
+
+  # Post-install: detect shadowed or stale codex-worker binaries elsewhere on PATH
+  local active_path
+  active_path="$(command -v "${CODEX_WORKER_DEFAULT_BIN_NAME}" 2>/dev/null || true)"
+  if [[ -n "${active_path}" && "${active_path}" != "${install_path}" ]]; then
+    local active_version
+    active_version="$("${active_path}" --version 2>/dev/null || true)"
+    cw_warn "another codex-worker (${active_version:-unknown version}) exists at ${active_path} and takes precedence over ${install_path}"
+    cw_warn "remove it with: rm \"${active_path}\" (or npm uninstall -g codex-worker)"
+  fi
+
+  # Detect all other codex-worker binaries on PATH that could cause confusion
+  local IFS=':'
+  local dir_entry found_path
+  for dir_entry in ${PATH}; do
+    found_path="${dir_entry}/${CODEX_WORKER_DEFAULT_BIN_NAME}"
+    if [[ -x "${found_path}" && "${found_path}" != "${install_path}" && "${found_path}" != "${active_path:-}" ]]; then
+      local stale_version
+      stale_version="$("${found_path}" --version 2>/dev/null || true)"
+      cw_warn "stale codex-worker (${stale_version:-unknown version}) found at ${found_path}"
+    fi
+  done
 }
 
 if [[ "${CODEX_WORKER_INSTALL_SOURCED}" -eq 0 ]]; then

@@ -19,9 +19,11 @@ import { ProfileManager } from '../core/profile-manager.js';
 import { PersistentStore } from '../core/store.js';
 import type {
   AccountProfileState,
+  CodexErrorTag,
   LocalJobRecord,
   PendingServerRequestRecord,
   ThreadRecord,
+  TurnErrorDetail,
   TurnRecord,
 } from '../core/types.js';
 import {
@@ -70,12 +72,108 @@ interface ActiveExecution {
   writer?: EventWriter | undefined;
   settled: boolean;
   detach: () => void;
+  visible: Promise<Record<string, unknown>>;
   resolve: (value: Record<string, unknown>) => void;
   reject: (error: Error) => void;
 }
 
 export interface CliCodexWorkerServiceOptions {
   connectionFactory?: ((cwd: string, codexHome: string) => AppServerLike) | undefined;
+}
+
+// ---------------------------------------------------------------------------
+// CodexErrorInfo wire-format parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Map from camelCase wire strings to snake_case CodexErrorTag.
+ * Covers every variant of the upstream CodexErrorInfo discriminated union.
+ */
+const CODEX_ERROR_INFO_TAG_MAP: Record<string, CodexErrorTag> = {
+  contextWindowExceeded: 'context_window_exceeded',
+  usageLimitExceeded: 'usage_limit_exceeded',
+  serverOverloaded: 'server_overloaded',
+  httpConnectionFailed: 'http_connection_failed',
+  responseStreamConnectionFailed: 'response_stream_connection_failed',
+  responseStreamDisconnected: 'response_stream_disconnected',
+  responseTooManyFailedAttempts: 'response_too_many_failed_attempts',
+  internalServerError: 'internal_server_error',
+  unauthorized: 'unauthorized',
+  badRequest: 'bad_request',
+  threadRollbackFailed: 'thread_rollback_failed',
+  sandboxError: 'sandbox_error',
+  activeTurnNotSteerable: 'active_turn_not_steerable',
+  other: 'other',
+};
+
+/**
+ * Parse the upstream codexErrorInfo value into a CodexErrorTag and optional httpStatusCode.
+ *
+ * The wire value is either:
+ *   - a string literal:  "contextWindowExceeded"
+ *   - an object with a single key:  { "httpConnectionFailed": { "httpStatusCode": 502 } }
+ */
+function parseCodexErrorInfo(value: unknown): { tag: CodexErrorTag; httpStatusCode?: number } {
+  if (typeof value === 'string') {
+    return { tag: CODEX_ERROR_INFO_TAG_MAP[value] ?? 'other' };
+  }
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const keys = Object.keys(value);
+    if (keys.length === 1) {
+      const key = keys[0]!;
+      const tag = CODEX_ERROR_INFO_TAG_MAP[key] ?? 'other';
+      const inner = (value as Record<string, unknown>)[key];
+      const httpStatusCode = isRecord(inner)
+        ? (typeof inner.httpStatusCode === 'number' ? inner.httpStatusCode : undefined)
+        : undefined;
+      return { tag, httpStatusCode };
+    }
+  }
+  return { tag: 'other' };
+}
+
+/**
+ * Build a TurnErrorDetail from an upstream TurnError-shaped object
+ * (the turn.error field on turn/completed, or params.error on error notification).
+ */
+function parseTurnError(
+  turnError: Record<string, unknown> | undefined,
+  fallbackMessage: string,
+): TurnErrorDetail {
+  if (!turnError) {
+    return { message: fallbackMessage, tag: 'other' };
+  }
+  const message = stringValue(turnError.message) ?? fallbackMessage;
+  const additionalDetails = stringValue(turnError.additionalDetails);
+  const codexInfo = turnError.codexErrorInfo;
+  const { tag, httpStatusCode } = codexInfo != null
+    ? parseCodexErrorInfo(codexInfo)
+    : { tag: 'other' as CodexErrorTag, httpStatusCode: undefined };
+
+  return {
+    message,
+    tag,
+    ...(httpStatusCode !== undefined ? { httpStatusCode } : {}),
+    ...(additionalDetails ? { additionalDetails } : {}),
+    ...(codexInfo != null ? { raw: isRecord(codexInfo) ? codexInfo : { value: codexInfo } } : {}),
+  };
+}
+
+/**
+ * Build a TurnErrorDetail from the params of an `error` notification.
+ * The error shape lives at params.error (not at the top level).
+ */
+function parseTurnErrorFromParams(params: Record<string, unknown>): TurnErrorDetail {
+  const remoteError = isRecord(params.error) ? params.error : undefined;
+  const fallback = stringValue(params.message)
+    ?? (remoteError ? JSON.stringify(remoteError).slice(0, 200) : undefined)
+    ?? JSON.stringify(params).slice(0, 200);
+  return parseTurnError(remoteError, fallback);
+}
+
+/** Create a TurnErrorDetail for failures that originate inside codex-worker. */
+function localErrorDetail(tag: CodexErrorTag, message: string): TurnErrorDetail {
+  return { message, tag };
 }
 
 function nowIso(): string {
@@ -108,10 +206,6 @@ function connectionKey(cwd: string, codexHome: string): string {
 
 function promptPreview(prompt: string): string {
   return prompt.trim().replace(/\s+/g, ' ').slice(0, 120);
-}
-
-function requestIdText(id: RpcId): string {
-  return String(id);
 }
 
 function buildTextInput(text: string): Array<Record<string, unknown>> {
@@ -300,6 +394,7 @@ export class CliCodexWorkerService {
     const localThread = this.resolveThread(threadId);
     const cwd = stringValue(args.cwd);
     const started = await this.startClientForThread(localThread, cwd);
+    const detachRawLog = this.attachRawClientLogObservers(started.client, localThread.cwd, localThread.id);
     try {
       const cfg = this.getConfigFor(started.profile.codexHome);
       const params: Record<string, unknown> = {
@@ -339,6 +434,7 @@ export class CliCodexWorkerService {
         actions: this.buildActions(thread.id),
       };
     } finally {
+      detachRawLog();
       await started.client.stop().catch(() => {});
     }
   }
@@ -396,6 +492,40 @@ export class CliCodexWorkerService {
     return {
       data: this.store.listThreads(),
     };
+  }
+
+  async threadRollback(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const threadId = stringValue(args.threadId);
+    if (!threadId) {
+      throw new Error('thread.rollback requires threadId');
+    }
+    const thread = this.resolveThread(threadId);
+    const started = await this.startClientForThread(thread);
+    try {
+      const response = await started.client.request('thread/rollback', {
+        threadId: thread.id,
+        numTurns: typeof args.numTurns === 'number' ? args.numTurns : 1,
+      });
+      const remoteThread = isRecord(response.thread) ? response.thread : undefined;
+      const turns = Array.isArray(remoteThread?.turns) ? remoteThread.turns.filter(isRecord) : [];
+      this.store.replaceTurnsForThread(thread.id, turns as Array<Partial<TurnRecord> & { id: string }>);
+      const allowedTurnIds = turns
+        .map((turn) => stringValue(turn.id))
+        .filter((id): id is string => Boolean(id));
+      this.store.pruneJobsForThreadTurns(thread.id, allowedTurnIds);
+      this.store.prunePendingRequestsForThreadTurns(thread.id, allowedTurnIds);
+      this.store.updateThread(thread.id, {
+        latestTurnId: allowedTurnIds[0],
+        status: this.mapThreadStatus(remoteThread?.status ?? 'idle'),
+      });
+      await this.persistProfiles();
+      return {
+        thread: remoteThread ?? thread,
+        actions: this.buildActions(thread.id),
+      };
+    } finally {
+      await started.client.stop().catch(() => {});
+    }
   }
 
   async run(args: Record<string, unknown>, writer?: EventWriter): Promise<Record<string, unknown>> {
@@ -499,36 +629,25 @@ export class CliCodexWorkerService {
     if (!threadId || !expectedTurnId) {
       throw new Error('turn.steer requires threadId and expectedTurnId');
     }
+    const execution = this.activeExecutions.get(threadId);
+    if (!execution) {
+      throw new Error(`Thread ${threadId} is not active.`);
+    }
+    if (execution.settled) {
+      throw new Error(`Thread ${threadId} is not accepting steer requests while waiting on another operation.`);
+    }
+    execution.writer = writer ?? execution.writer;
     const thread = this.resolveThread(threadId);
     const prompt = stringValue(args.prompt) ?? stringValue(args.content) ?? '';
-    const started = await this.startClientForThread(thread);
-    const steerCfg = this.getConfigFor(started.profile.codexHome);
-    await started.client.request('thread/resume', {
-      threadId: thread.id,
-      modelProvider: steerCfg.modelProvider ?? 'openai',
-      approvalPolicy: steerCfg.approvalPolicy ?? 'on-request',
-      sandbox: steerCfg.sandboxMode ?? 'workspace-write',
-      persistExtendedHistory: false,
-    });
-    const execution = await this.launchTurn({
-      client: started.client,
-      thread,
-      source: 'turn/steer',
-      alias: 'send',
-      prompt,
-      inputFilePath: stringValue(args.inputFilePath) ?? 'prompt.md',
-      timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : resolveTurnIdleTimeoutMs(),
-      writer,
-      startTurn: async () => await started.client.request('turn/steer', {
-        threadId: thread.id,
-        expectedTurnId,
-        model: thread.model,
-        input: buildTextInput(prompt),
-      }),
+    await execution.client.request('turn/steer', {
+      threadId: execution.threadId,
+      expectedTurnId,
+      model: thread.model,
+      input: buildTextInput(prompt),
     });
 
     if (Boolean(args.async)) {
-      return this.turnPayload(thread.id, execution.turn.id, execution.job.id);
+      return this.turnPayload(execution.threadId, execution.turnId, execution.jobId);
     }
     return await execution.visible;
   }
@@ -552,6 +671,146 @@ export class CliCodexWorkerService {
       status: 'interrupt_requested',
       actions: this.buildActions(execution.threadId),
     };
+  }
+
+  async reviewStart(args: Record<string, unknown>, writer?: EventWriter): Promise<Record<string, unknown>> {
+    const threadId = stringValue(args.threadId);
+    if (!threadId) {
+      throw new Error('review.start requires threadId');
+    }
+    const thread = this.resolveThread(threadId);
+    const started = await this.startClientForThread(thread);
+    const cfg = this.getConfigFor(started.profile.codexHome);
+    await started.client.request('thread/resume', {
+      threadId: thread.id,
+      modelProvider: cfg.modelProvider ?? 'openai',
+      approvalPolicy: cfg.approvalPolicy ?? 'on-request',
+      sandbox: cfg.sandboxMode ?? 'workspace-write',
+      persistExtendedHistory: false,
+    });
+
+    const target = stringValue(args.commit)
+      ? { type: 'commit', sha: stringValue(args.commit), title: stringValue(args.commitTitle) ?? null }
+      : stringValue(args.baseBranch)
+        ? { type: 'baseBranch', branch: stringValue(args.baseBranch) }
+        : stringValue(args.instructions)
+          ? { type: 'custom', instructions: stringValue(args.instructions) }
+          : { type: 'uncommittedChanges' };
+
+    const response = await started.client.request('review/start', {
+      threadId: thread.id,
+      target,
+      delivery: Boolean(args.detached) ? 'detached' : 'inline',
+    });
+    const reviewThreadId = stringValue(response.reviewThreadId) ?? thread.id;
+    const turn = isRecord(response.turn) ? response.turn : undefined;
+    const turnId = stringValue(turn?.id);
+    if (!turnId) {
+      await started.client.stop().catch(() => {});
+      throw new Error('review/start did not return a turn id.');
+    }
+    const reviewThread = this.store.upsertThread({
+      ...thread,
+      id: reviewThreadId,
+      status: 'running',
+      updatedAt: nowIso(),
+    });
+    const timestamp = nowIso();
+    const turnRecord = this.store.upsertTurn({
+      id: turnId,
+      threadId: reviewThread.id,
+      status: stringValue(turn?.status) ?? 'running',
+      source: 'review/start',
+      inputFilePath: 'review.md',
+      promptPreview: `review ${JSON.stringify(target)}`,
+      startedAt: timestamp,
+    });
+    const job = this.store.createJob({
+      alias: 'review',
+      threadId: reviewThread.id,
+      turnId,
+      status: 'running',
+      inputFilePath: 'review.md',
+      outputLogPath: logPath(reviewThread.cwd, reviewThread.id),
+    });
+    this.store.updateThread(reviewThread.id, {
+      latestTurnId: turnId,
+      status: 'running',
+      lastError: undefined,
+    });
+    const visible = Promise.resolve(this.turnPayload(reviewThread.id, turnId, job.id));
+    const execution: ActiveExecution = {
+      threadId: reviewThread.id,
+      turnId,
+      jobId: job.id,
+      source: 'review/start',
+      connectionKey: connectionKey(reviewThread.cwd, reviewThread.codexHome),
+      cwd: reviewThread.cwd,
+      codexHome: reviewThread.codexHome,
+      client: started.client,
+      writer,
+      settled: false,
+      detach: this.attachRawClientLogObservers(started.client, reviewThread.cwd, reviewThread.id, {
+        onNotification: (notification) => {
+          void this.handleNotification(execution, notification).catch((err) => {
+            void appendRawEvent(reviewThread.cwd, reviewThread.id, { dir: 'daemon', message: `handleNotification error: ${String(err)}` });
+          });
+        },
+        onServerRequest: (request) => {
+          void this.handleServerRequest(execution, request).catch((err) => {
+            void appendRawEvent(reviewThread.cwd, reviewThread.id, { dir: 'daemon', message: `handleServerRequest error: ${String(err)}` });
+          });
+        },
+        onExit: () => {
+          void this.failExecution(execution, localErrorDetail('app_server_exited', 'Codex app-server exited before the review finished.'));
+        },
+      }),
+      visible,
+      resolve: () => {},
+      reject: () => {},
+    };
+    this.activeExecutions.set(reviewThread.id, execution);
+    await this.persistProfiles();
+
+    if (Boolean(args.async)) {
+      return this.turnPayload(reviewThread.id, turnRecord.id, job.id);
+    }
+    return await visible;
+  }
+
+  async commandExec(args: Record<string, unknown>, writer?: EventWriter): Promise<Record<string, unknown>> {
+    const command = Array.isArray(args.command) ? args.command.filter((value): value is string => typeof value === 'string') : [];
+    if (command.length === 0) {
+      throw new Error('command.exec requires command');
+    }
+    const cwd = stringValue(args.cwd) ?? process.cwd();
+    const started = await this.startClientOnHealthyProfile(cwd);
+    try {
+      const onNotification = (notification: RpcNotificationMessage) => {
+        if (notification.method === 'command/exec/outputDelta') {
+          writer?.event(notification.method, isRecord(notification.params) ? notification.params : {});
+        }
+      };
+      started.client.on('notification', onNotification);
+      const processId = stringValue(args.processId)
+        ?? ((Boolean(args.tty) || Boolean(args.streamStdoutStderr) || Boolean(args.streamStdin))
+          ? `exec-${Date.now()}`
+          : undefined);
+      const response = await started.client.request('command/exec', {
+        command,
+        cwd,
+        processId,
+        tty: Boolean(args.tty),
+        streamStdin: Boolean(args.streamStdin),
+        streamStdoutStderr: Boolean(args.streamStdoutStderr),
+        timeoutMs: typeof args.timeoutMs === 'number' ? args.timeoutMs : undefined,
+        sandboxPolicy: args.sandboxPolicy,
+      });
+      started.client.off?.('notification', onNotification);
+      return response;
+    } finally {
+      await started.client.stop().catch(() => {});
+    }
   }
 
   async modelList(_args: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
@@ -616,8 +875,12 @@ export class CliCodexWorkerService {
     }
 
     const payload = parseJsonObject(stringValue(args.json)) ?? this.buildRequestPayload(request, {
-      decision: (typeof args.decision === 'string' || isRecord(args.decision)) ? (args.decision as string | Record<string, unknown>) : undefined,
-      answer: stringValue(args.answer),
+      decision: parseJsonObject(stringValue(args.decisionJson))
+        ?? ((typeof args.decision === 'string' || isRecord(args.decision)) ? (args.decision as string | Record<string, unknown>) : undefined),
+      answers: Array.isArray(args.answer)
+        ? args.answer.filter((value): value is string => typeof value === 'string' && value.length > 0)
+        : (stringValue(args.answer) ? [stringValue(args.answer)!] : []),
+      note: stringValue(args.note),
       questionId: stringValue(args.questionId),
     });
     await execution.client.respond(request.requestId, payload);
@@ -675,6 +938,7 @@ export class CliCodexWorkerService {
       cwd: process.cwd(),
       stateRoot: ensureStateRoot().rootDir,
       profiles: this.profileManager.getProfiles(),
+      experimentalApiEnabled: process.env.CODEX_WORKER_EXPERIMENTAL_API === '1',
     };
   }
 
@@ -782,6 +1046,22 @@ export class CliCodexWorkerService {
     throw new Error(`Unable to start Codex app-server for thread ${thread.id}.`);
   }
 
+  private async startClientOnHealthyProfile(cwd: string): Promise<{ profile: AccountProfileState; client: AppServerLike }> {
+    const profiles = this.profileManager.getCandidateProfiles();
+    for (const profile of profiles) {
+      const client = this.connectionFactory(cwd, profile.codexHome);
+      try {
+        await client.start();
+        return { profile, client };
+      } catch (error) {
+        const failure = classifyWorkerFailure(error);
+        this.profileManager.markFailure(profile.id, failure.category, failure.message);
+        await client.stop().catch(() => {});
+      }
+    }
+    throw new Error('Unable to start Codex app-server on any configured CODEX_HOME.');
+  }
+
   private async launchTurn(input: {
     client: AppServerLike;
     thread: ThreadRecord;
@@ -797,10 +1077,51 @@ export class CliCodexWorkerService {
     job: LocalJobRecord;
     visible: Promise<Record<string, unknown>>;
   }> {
-    const response = await input.startTurn();
+    let execution!: ActiveExecution;
+    const cwd = input.thread.cwd;
+    const threadId = input.thread.id;
+
+    let lastActivityAt = Date.now();
+    let idleTimer: NodeJS.Timeout | undefined;
+    const bumpActivity = () => {
+      lastActivityAt = Date.now();
+    };
+
+    const detachRawLog = this.attachRawClientLogObservers(input.client, cwd, threadId, {
+      onNotification: (notification) => {
+        bumpActivity();
+        if (execution) {
+          void this.handleNotification(execution, notification).catch((err) => {
+            void appendRawEvent(cwd, threadId, { dir: 'daemon', message: `handleNotification error: ${String(err)}` });
+          });
+        }
+      },
+      onServerRequest: (request) => {
+        bumpActivity();
+        if (execution) {
+          void this.handleServerRequest(execution, request).catch((err) => {
+            void appendRawEvent(cwd, threadId, { dir: 'daemon', message: `handleServerRequest error: ${String(err)}` });
+          });
+        }
+      },
+      onExit: () => {
+        if (execution) {
+          void this.failExecution(execution, localErrorDetail('app_server_exited', 'Codex app-server exited before the turn finished.'));
+        }
+      },
+    });
+
+    let response: Record<string, unknown>;
+    try {
+      response = await input.startTurn();
+    } catch (error) {
+      detachRawLog();
+      throw error;
+    }
     const turn = isRecord(response.turn) ? response.turn : undefined;
     const turnId = stringValue(turn?.id);
     if (!turnId) {
+      detachRawLog();
       throw new Error('turn/start did not return a turn id.');
     }
 
@@ -827,7 +1148,6 @@ export class CliCodexWorkerService {
       status: 'running',
       lastError: undefined,
     });
-    let execution!: ActiveExecution;
     const visible = new Promise<Record<string, unknown>>((resolve, reject) => {
       const currentExecution: ActiveExecution = {
         threadId: input.thread.id,
@@ -841,17 +1161,12 @@ export class CliCodexWorkerService {
         writer: input.writer,
         settled: false,
         detach: () => {},
+        visible: undefined as unknown as Promise<Record<string, unknown>>,
         resolve,
         reject,
       };
       execution = currentExecution;
       this.activeExecutions.set(input.thread.id, currentExecution);
-
-      const cwd = input.thread.cwd;
-      const threadId = input.thread.id;
-
-      let lastActivityAt = Date.now();
-      let idleTimer: NodeJS.Timeout | undefined;
       const scheduleIdleTimer = (ms: number) => {
         const t = setTimeout(fireIfIdle, ms);
         t.unref();
@@ -870,78 +1185,14 @@ export class CliCodexWorkerService {
         });
         void this.failExecution(
           currentExecution,
-          new Error(`Idle turn timeout: no events for ${Math.round(idleMs / 1000)}s (limit ${Math.round(input.timeoutMs / 1000)}s). Set CODEX_WORKER_TURN_TIMEOUT_MS to raise.`),
+          localErrorDetail('idle_timeout', `Idle turn timeout: no events for ${Math.round(idleMs / 1000)}s (limit ${Math.round(input.timeoutMs / 1000)}s). Set CODEX_WORKER_TURN_TIMEOUT_MS to raise.`),
         );
-      };
-      const bumpActivity = () => {
-        lastActivityAt = Date.now();
-      };
-
-      const onNotification = (notification: RpcNotificationMessage) => {
-        bumpActivity();
-        void appendRawEvent(cwd, threadId, {
-          dir: 'notification',
-          method: notification.method,
-          params: notification.params,
-        });
-        void this.handleNotification(currentExecution, notification);
-      };
-      const onServerRequest = (request: RpcServerRequestMessage) => {
-        bumpActivity();
-        void appendRawEvent(cwd, threadId, {
-          dir: 'server_request',
-          id: request.id,
-          method: request.method,
-          params: request.params,
-        });
-        void this.handleServerRequest(currentExecution, request);
-      };
-      const onExit = (info: unknown) => {
-        void appendRawEvent(cwd, threadId, { dir: 'exit', data: info });
-        void this.failExecution(currentExecution, new Error('Codex app-server exited before the turn finished.'));
-      };
-      const onRpcOut = (payload: Record<string, unknown>) => {
-        void appendRawEvent(cwd, threadId, {
-          dir: 'rpc_out',
-          id: payload.id as string | number | undefined,
-          method: typeof payload.method === 'string' ? payload.method : undefined,
-          params: payload.params,
-          result: payload.result,
-        });
-      };
-      const onRpcIn = (payload: Record<string, unknown>) => {
-        void appendRawEvent(cwd, threadId, {
-          dir: 'rpc_in',
-          id: payload.id as string | number | undefined,
-          result: payload.result,
-          error: payload.error,
-        });
-      };
-      const onStderr = (chunk: string) => {
-        void appendRawEvent(cwd, threadId, { dir: 'stderr', data: chunk });
-      };
-      const onProtocolError = (info: unknown) => {
-        void appendRawEvent(cwd, threadId, { dir: 'protocol_error', data: info });
       };
 
       currentExecution.detach = () => {
-        input.client.off?.('notification', onNotification);
-        input.client.off?.('serverRequest', onServerRequest);
-        input.client.off?.('exit', onExit);
-        input.client.off?.('rpcOut', onRpcOut);
-        input.client.off?.('rpcIn', onRpcIn);
-        input.client.off?.('stderr', onStderr);
-        input.client.off?.('protocolError', onProtocolError);
+        detachRawLog();
         if (idleTimer) clearTimeout(idleTimer);
       };
-
-      input.client.on('notification', onNotification);
-      input.client.on('serverRequest', onServerRequest);
-      input.client.on('exit', onExit);
-      input.client.on('rpcOut', onRpcOut);
-      input.client.on('rpcIn', onRpcIn);
-      input.client.on('stderr', onStderr);
-      input.client.on('protocolError', onProtocolError);
 
       void appendRawEvent(cwd, threadId, {
         dir: 'daemon',
@@ -950,6 +1201,7 @@ export class CliCodexWorkerService {
 
       scheduleIdleTimer(input.timeoutMs);
     });
+    execution.visible = visible;
 
     try {
       await this.store.appendThreadEvent({
@@ -965,10 +1217,8 @@ export class CliCodexWorkerService {
       });
       await this.persistProfiles();
     } catch (error) {
-      await this.failExecution(
-        execution,
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      const msg = error instanceof Error ? error.message : String(error);
+      await this.failExecution(execution, localErrorDetail('other', msg));
     }
 
     // Ensure rejections are never unhandled. Async callers read terminal state
@@ -1027,14 +1277,26 @@ export class CliCodexWorkerService {
       } else if (status === 'interrupted') {
         await this.completeExecution(execution, 'interrupted');
       } else {
-        const message = isRecord(turn?.error) ? stringValue(turn.error.message) : undefined;
-        await this.failExecution(execution, new Error(message ?? `Turn finished with status ${status}.`));
+        const turnError = isRecord(turn?.error) ? turn.error : undefined;
+        const detail = parseTurnError(turnError, `Turn finished with status ${status}.`);
+        await this.failExecution(execution, detail);
       }
       return;
     }
 
     if (notification.method === 'error') {
-      await this.failExecution(execution, new Error(stringValue(params.message) ?? 'Codex reported an error.'));
+      const detail = parseTurnErrorFromParams(params);
+      if (params.willRetry === true) {
+        await this.store.appendThreadEvent({
+          cwd: execution.cwd,
+          threadId: execution.threadId,
+          payload: { type: 'turn.retrying', error: detail.message, tag: detail.tag, errorInfo: detail },
+          logLine: `retrying [${detail.tag}]: ${detail.message}`,
+        });
+        execution.writer?.event('error', { ...params, willRetry: true });
+        return;
+      }
+      await this.failExecution(execution, detail);
       return;
     }
 
@@ -1048,7 +1310,7 @@ export class CliCodexWorkerService {
   private async handleServerRequest(execution: ActiveExecution, request: RpcServerRequestMessage): Promise<void> {
     const params = isRecord(request.params) ? request.params : {};
     const pending = this.store.createPendingRequest({
-      requestId: requestIdText(request.id),
+      requestId: request.id,
       method: request.method,
       threadId: execution.threadId,
       turnId: execution.turnId,
@@ -1102,10 +1364,13 @@ export class CliCodexWorkerService {
     }
   }
 
-  private async failExecution(execution: ActiveExecution, error: Error): Promise<void> {
+  private async failExecution(
+    execution: ActiveExecution,
+    detail: TurnErrorDetail,
+  ): Promise<void> {
     await appendRawEvent(execution.cwd, execution.threadId, {
       dir: 'daemon',
-      message: `failExecution turnId=${execution.turnId} error=${error.message}`,
+      message: `failExecution turnId=${execution.turnId} tag=${detail.tag} error=${detail.message}`,
     });
     if (execution.settled) {
       return;
@@ -1116,27 +1381,116 @@ export class CliCodexWorkerService {
     this.store.updateTurn(execution.turnId, {
       status: 'failed',
       completedAt: nowIso(),
-      error: error.message,
+      error: detail.message,
+      errorInfo: detail,
     });
     this.store.updateJob(execution.jobId, {
       status: 'failed',
-      error: error.message,
+      error: detail.message,
     });
     this.store.updateThread(execution.threadId, {
       status: 'failed',
-      lastError: error.message,
+      lastError: detail.message,
+      lastErrorTag: detail.tag,
+    });
+    await this.store.appendThreadEvent({
+      cwd: execution.cwd,
+      threadId: execution.threadId,
+      payload: {
+        type: 'turn.failed',
+        turnId: execution.turnId,
+        error: detail.message,
+        tag: detail.tag,
+        errorInfo: detail,
+      },
+      logLine: `error [${detail.tag}]: ${detail.message}`,
     });
     await this.persistProfiles();
     await execution.client.stop().catch(() => {});
 
-    execution.reject(error);
+    execution.reject(new Error(detail.message));
+  }
+
+  private attachRawClientLogObservers(
+    client: AppServerLike,
+    cwd: string,
+    threadId: string,
+    hooks: {
+      onNotification?: ((notification: RpcNotificationMessage) => void) | undefined;
+      onServerRequest?: ((request: RpcServerRequestMessage) => void) | undefined;
+      onExit?: ((info: unknown) => void) | undefined;
+    } = {},
+  ): () => void {
+    const onNotification = (notification: RpcNotificationMessage) => {
+      void appendRawEvent(cwd, threadId, {
+        dir: 'notification',
+        method: notification.method,
+        params: notification.params,
+      });
+      hooks.onNotification?.(notification);
+    };
+    const onServerRequest = (request: RpcServerRequestMessage) => {
+      void appendRawEvent(cwd, threadId, {
+        dir: 'server_request',
+        id: request.id,
+        method: request.method,
+        params: request.params,
+      });
+      hooks.onServerRequest?.(request);
+    };
+    const onExit = (info: unknown) => {
+      void appendRawEvent(cwd, threadId, { dir: 'exit', data: info });
+      hooks.onExit?.(info);
+    };
+    const onRpcOut = (payload: Record<string, unknown>) => {
+      void appendRawEvent(cwd, threadId, {
+        dir: 'rpc_out',
+        id: payload.id as string | number | undefined,
+        method: typeof payload.method === 'string' ? payload.method : undefined,
+        params: payload.params,
+        result: payload.result,
+      });
+    };
+    const onRpcIn = (payload: Record<string, unknown>) => {
+      void appendRawEvent(cwd, threadId, {
+        dir: 'rpc_in',
+        id: payload.id as string | number | undefined,
+        result: payload.result,
+        error: payload.error,
+      });
+    };
+    const onStderr = (chunk: string) => {
+      void appendRawEvent(cwd, threadId, { dir: 'stderr', data: chunk });
+    };
+    const onProtocolError = (info: unknown) => {
+      void appendRawEvent(cwd, threadId, { dir: 'protocol_error', data: info });
+    };
+
+    client.on('notification', onNotification);
+    client.on('serverRequest', onServerRequest);
+    client.on('exit', onExit);
+    client.on('rpcOut', onRpcOut);
+    client.on('rpcIn', onRpcIn);
+    client.on('stderr', onStderr);
+    client.on('protocolError', onProtocolError);
+
+    return () => {
+      client.off?.('notification', onNotification);
+      client.off?.('serverRequest', onServerRequest);
+      client.off?.('exit', onExit);
+      client.off?.('rpcOut', onRpcOut);
+      client.off?.('rpcIn', onRpcIn);
+      client.off?.('stderr', onStderr);
+      client.off?.('protocolError', onProtocolError);
+    };
   }
 
   private buildRequestPayload(
     request: PendingServerRequestRecord,
     args: {
       decision?: string | Record<string, unknown> | undefined;
-      answer?: string | undefined;
+      answers?: string[] | undefined;
+      note?: string | undefined;
       questionId?: string | undefined;
     },
   ): Record<string, unknown> {
@@ -1152,7 +1506,8 @@ export class CliCodexWorkerService {
       return {
         answers: {
           [questionId]: {
-            answers: [args.answer ?? ''],
+            answers: args.answers && args.answers.length > 0 ? args.answers : [''],
+            ...(args.note ? { other: args.note } : {}),
           },
         },
       };
